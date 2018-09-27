@@ -815,7 +815,6 @@ def check_chals(host_id, nodes, queue):
         chals = node.chals
         node.chals = sorted(chals, key=lambda chal:chal.start_at, reverse=True)
 
-
     not_pass_nodes = [node for node in nodes if not node.is_pass(ignore=True)]
 
     if not_pass_nodes:
@@ -824,34 +823,34 @@ def check_chals(host_id, nodes, queue):
             node.dump()
     else:
         # 取每个节点的第一个有效挑战，排序
-        chals = [node.chals[0] for node in nodes if not node.exceptions and not node.downtimes and node.chals]
-        sorted_chals = sorted(chals, key=lambda chal: chal.receive_at)  # 从小到大
+        # chals = [node.chals[0] for node in nodes if not node.exceptions and not node.downtimes and node.chals]
+        # sorted_chals = sorted(chals, key=lambda chal: chal.receive_at)  # 从小到大
+        valid_chal_nodes = [node for node in nodes if not node.exceptions and not node.downtimes and node.chals]
+        sorted_nodes = sorted(valid_chal_nodes, key=lambda node: node.chals[0].receive_at)  # 从小到大
 
         # 如果小于3个节点，无需处理
-        if len(sorted_chals) < 3:
-            logger.debug('less than 3 sorted_chals, ignored')
+        if len(sorted_nodes) < 3:
+            logger.debug('less than 3 sorted_nodes, ignored')
             return
 
         expected_duration = 25 * 60 * 1000  # 假设允许最小间隔为25分钟
-        durations = [(sorted_chals[i+1].start_at - sorted_chals[i].receive_at) for i in range(0, len(sorted_chals) - 1)]
+        durations = [(sorted_nodes[i+1].chals[0].start_at - sorted_nodes[i].chals[0].receive_at) for i in range(0, len(sorted_nodes) - 1)]
         min_duration = min(durations)
 
         index = durations.index(min_duration)  # durations的index映射到sorted_chals
 
         # logger.debug('min_duration: {}, expected_duration: {}'.format(min_duration, expected_duration))
         if min_duration < expected_duration:
-            target_node = sorted_chals[index]
-            target_node_after = sorted_chals[index+1]
-            #logger.debug('target_node: {}'.format(target_node))
-            #logger.debug('target_node_after: {}'.format(target_node_after))
+            target_node = sorted_nodes[index]
+            target_node_after = sorted_nodes[index+1]
 
-            last_chal_receive_at = sorted_chals[-1].receive_at
+            last_chal_receive_at = sorted_nodes[-1].chals[0].receive_at
             now = int(time() * 1000)
             nearest_predict_chal_start_at = now
             predict_duration = (3 * 3600 * 24 + 600) * 1000  # 3天10分钟
             interval = 50 * 60 * 1000  # 50分钟, 保证最后一次挑战到now至少一个interval， 且now到最近的预期挑战也是至少一个interval
-            for chal in sorted_chals:
-                predict_start_at = chal.receive_at + predict_duration
+            for node in sorted_nodes:
+                predict_start_at = node.chals[0].receive_at + predict_duration
                 if predict_start_at < now - 20 * 60 * 1000:
                     # 某些节点挑战间隔超过3天, 忽略这些节点
                     continue
