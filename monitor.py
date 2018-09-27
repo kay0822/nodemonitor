@@ -30,7 +30,7 @@ default_exclude_hosts = [17, 18]
 #     38,
 # ]
 default_only_hosts = [16, 19, 20] + list(range(21, 31)) + list(range(31, 41))
-default_ignore_etype = ('stkbal', 'chal', 'chalmax')
+default_ignore_etype = ('stkbal', 'chalmax')
 default_ignore_dtype = ()
 
 def parse_fqdn(fqdn):
@@ -796,7 +796,6 @@ def challenger(queue):
     
 def check_chals(host_id, nodes, queue):
     logger.info('>>>>>>>>>>>>>>> check host: {} <<<<<<<<<<<<<<<'.format(host_id))
-    #logger.info('>>>>> check host: {}'.format(host_id))
 
     for node in nodes:
         chals = node.chals
@@ -979,19 +978,35 @@ class Monitor:
             except:
                 sleep(20)
 
+    def challenger(self, queue):
+        while True:
+            node = queue.get()
+            host_id, node_id = node.location
+            curserver = node.curserver
+            do_challenge(host_id, node_id, curserver)
+
     def handle_downtime(self, node, dt):
         host_id, node_id = dt.location
-        home = dt.home
+        node_home = node.home
+        dt_home = dt.home
+        node_curserver = node.curserver
+        dt_curserver = dt.curserver
         fqdn = dt.fqdn
         dtype = dt.dtype
         if dtype in default_ignore_dtype:
             logger.debug('downtime ignored, fqdn: {}, dtype: {}'.format(fqdn, dtype))
         else:
             logger.info('handle_downtime, node: {}, dt: {}'.format(node, dt))
+
+            if node_home != dt_home or node_curserver != dt_curserver:
+                logger.warning('!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!')
+                logger.warning('downtime home or curserver not equal')
+                logger.warning('!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!')
+
             if dtype == 'sys':
                 restart_secnode(host_id, node_id)
             elif dtype == 'zend':
-                snset(host_id, node_id, 'home', home)
+                snset(host_id, node_id, 'home', dt_home)
                 restart_secnode(host_id, node_id)
             else:
                 logger.warning('!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!')
@@ -1005,17 +1020,25 @@ class Monitor:
 
     def handle_exception(self, node, ex):
         host_id, node_id = ex.location
-        home = ex.home
+        node_home = node.home
+        ex_home = ex.home
         fqdn = ex.fqdn
         etype = ex.etype
         if etype in default_ignore_etype:
             logger.debug('exception ignored, fqdn: {}, etype: {}'.format(fqdn, etype))
         else:
             logger.info('handle_exception, node: {}, ex: {}'.format(node, ex))
+            if node_home != ex_home:
+                logger.warning('!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!')
+                logger.warning('ex home not equal')
+                logger.warning('!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!')
             if etype == 'cert':
                 restart_secnode(host_id, node_id)
             elif etype == 'peers':
-                snset(host_id, node_id, 'home', home)
+                snset(host_id, node_id, 'home', ex_home)
+                restart_secnode(host_id, node_id)
+            elif etype == 'chal':
+                snset(host_id, node_id, 'home', ex_home)
                 restart_secnode(host_id, node_id)
             else:
                 logger.warning('!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!')
@@ -1076,13 +1099,13 @@ class Monitor:
         challenge_handler_queue = Queue()
 
         thread_list = []
-        t = Thread(target=exception_handler, args=(exception_handler_queue,), daemon=True)
+        t = Thread(target=self.exception_handler, args=(exception_handler_queue,), daemon=True)
         t.start()
         thread_list.append(t)
-        t = Thread(target=downtime_handler, args=(downtime_handler_queue,), daemon=True)
+        t = Thread(target=self.downtime_handler, args=(downtime_handler_queue,), daemon=True)
         t.start()
         thread_list.append(t)
-        t = Thread(target=challenger, args=(challenge_handler_queue,), daemon=True)
+        t = Thread(target=self.challenger, args=(challenge_handler_queue,), daemon=True)
         t.start()
         thread_list.append(t)
 
@@ -1112,7 +1135,9 @@ class Monitor:
                     elif status_code == 502:
                         down_server_list.append(server)
                     else:
-                        logger.warning()
+                        logger.warning('!!!!!!!!!!!!!!!!!!!!!!!')
+                        logger.warning('status_code unexpected, status_code: '.format(status_code))
+                        logger.warning('!!!!!!!!!!!!!!!!!!!!!!!')
                         down_server_list.append(server)
 
             if not server_status_ready:
@@ -1173,9 +1198,12 @@ class Monitor:
                 sleep(10)
                 continue
 
-            print('OK')
-            sleep(10)
-            continue
+            if down_server_list:
+                logger.warning('!!!!!!!!!!!!!!!!!!!!!!!!!!!')
+                logger.warning('SERVER DOWN, down_server_list: {}'.format(down_server_list))
+                logger.warning('!!!!!!!!!!!!!!!!!!!!!!!!!!!')
+                sleep(300)
+                continue
 
             node_dict_by_host = defaultdict(lambda: [])
             node_dict = {}
