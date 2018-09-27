@@ -1046,6 +1046,22 @@ class Monitor:
             t.start()
             thread_list.append(t)
 
+            t = Thread(
+                target=self.get_valid_nodes_thread,
+                args=(email, key),
+                daemon=True,
+            )
+            t.start()
+            thread_list.append(t)
+
+            t = Thread(
+                target=self.get_valid_chals_thread,
+                args=(email, key),
+                daemon=True,
+            )
+            t.start()
+            thread_list.append(t)
+
         for server in self.servers:
             t = Thread(
                 target=self.check_server_thread,
@@ -1085,7 +1101,7 @@ class Monitor:
                     server_status_ready = False
                     break
                 status_timestamp = self.servers_status_dict[server]['timestamp']
-                if now - status_timestamp > 200:
+                if now - status_timestamp > 200000:
                     logger.warning('status_timestamp out of date, server: {}'.format(server))
                     server_status_ready = False
                     break
@@ -1110,7 +1126,7 @@ class Monitor:
                     everything_ready = False
                     continue
                 exceptions_timestamp = self.exceptions_dict[key]['timestamp']
-                if now - exceptions_timestamp > 200:
+                if now - exceptions_timestamp > 200000:
                     logger.warning('exceptions_timestamp out of date, key: {}'.format(key))
                     everything_ready = False
                     break
@@ -1122,7 +1138,7 @@ class Monitor:
                     everything_ready = False
                     continue
                 downtimes_timestamp = self.downtimes_dict[key]['timestamp']
-                if now - downtimes_timestamp > 200:
+                if now - downtimes_timestamp > 200000:
                     logger.warning('downtimes_timestamp out of date, key: {}'.format(key))
                     everything_ready = False
                     break
@@ -1134,7 +1150,7 @@ class Monitor:
                     everything_ready = False
                     continue
                 nodes_timestamp = self.nodes_dict[key]['timestamp']
-                if now - nodes_timestamp > 200:
+                if now - nodes_timestamp > 200000:
                     logger.warning('downtimes_timestamp out of date, key: {}'.format(key))
                     everything_ready = False
                     break
@@ -1146,7 +1162,7 @@ class Monitor:
                     everything_ready = False
                     continue
                 chals_timstamp = self.chals_dict[key]['timestamp']
-                if now - chals_timstamp > 200:
+                if now - chals_timstamp > 200000:
                     logger.warning('chals_timestamp out of date, key: {}'.format(key))
                     everything_ready = False
                     break
@@ -1154,7 +1170,12 @@ class Monitor:
                     chal_list += self.chals_dict[key]['result']
 
             if not everything_ready:
+                sleep(10)
                 continue
+
+            print('OK')
+            sleep(10)
+            continue
 
             node_dict_by_host = defaultdict(lambda: [])
             node_dict = {}
