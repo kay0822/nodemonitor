@@ -1,4 +1,4 @@
-from a import *
+from monitor import *
 from threading import Thread
 from time import sleep
 
@@ -14,7 +14,7 @@ for n in es_dict:
              home = e.home
              if host_id in [17, 18]:
                  continue
-             #print(ns_dict[n], e)
-             print(n, e)
+             print(ns_dict[n], e)
+             #print(n, e)
              # host_id, node_id = e.location
              # restart_secnode(host_id, node_id)

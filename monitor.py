@@ -30,7 +30,7 @@ default_exclude_hosts = [17, 18]
 #     38,
 # ]
 default_only_hosts = [16, 19, 20] + list(range(21, 31)) + list(range(31, 41))
-default_ignore_etype = ('stkbal', 'chalmax')
+default_ignore_etype = ('stkbal', 'chalmax', 'stk42')
 default_ignore_dtype = ()
 
 def parse_fqdn(fqdn):
@@ -242,9 +242,10 @@ class Downtime:
 
     # 10days = 10 * 3600 * 24 * 1000 = 864000000
     def is_expired(self, now=None, duration=864000000):
+        if self.is_open:
+            return False
         if now is None:
             now = int(time() * 1000)
-
         if now - self.start_at > duration:
             expired = True
         else:
@@ -299,6 +300,9 @@ class Ex:
 
     # 10days = 10 * 3600 * 24 * 1000 = 864000000
     def is_expired(self, now=None, duration=864000000):
+        if self.is_open:
+            return False
+
         if now is None:
             now = int(time() * 1000)
         if now - self.start_at > duration:
@@ -797,10 +801,6 @@ def challenger(queue):
 def check_chals(host_id, nodes, queue):
     logger.info('>>>>>>>>>>>>>>> check host: {} <<<<<<<<<<<<<<<'.format(host_id))
 
-    for node in nodes:
-        chals = node.chals
-        node.chals = sorted(chals, key=lambda chal:chal.start_at, reverse=True)
-
     not_pass_nodes = [node for node in nodes if not node.is_pass(ignore=True)]
 
     if not_pass_nodes:
@@ -816,7 +816,7 @@ def check_chals(host_id, nodes, queue):
 
         # 如果小于3个节点，无需处理
         if len(sorted_nodes) < 3:
-            logger.debug('less than 3 sorted_nodes, ignored')
+            logger.debug('less than 3 sorted_nodes, ignored, sorted_nodes: {}, nodes: {}'.format(sorted_nodes, nodes))
             return
 
         expected_duration = 25 * 60 * 1000  # 假设允许最小间隔为25分钟
@@ -906,6 +906,14 @@ def check():
                 downtime_handler_queue.put((node, dt))
 
         for host_id, nodes in node_dict_by_host.items():
+            for node in nodes:
+                chals = node.chals
+                node.chals = sorted(chals, key=lambda chal:chal.start_at, reverse=True)
+                exceptions = node.exceptions
+                node.exceptions = sorted(exceptions, key=lambda ex:ex.start_at, reverse=True)
+                downtimes = node.downtimes
+                node.downtimes = sorted(downtimes, key=lambda dt:dt.start_at, reverse=True)
+
             check_chals(host_id, nodes, challenge_handler_queue)
 
         sleep(600)
@@ -926,11 +934,11 @@ class Monitor:
     def check_server_thread(self, server_name):
         while True:
             try:
-                r = requests.get('https://{server_name}.zensystem.io'.format(server_name=server_name))
+                r = requests.get('https://{server_name}.zensystem.io/api/srvstats'.format(server_name=server_name))
                 now = int(time() * 1000)
-                self.servers_status_dict[server_name]['timestamp'] = now
                 self.servers_status_dict[server_name]['result'] = r.status_code
-                sleep(30)
+                self.servers_status_dict[server_name]['timestamp'] = now
+                sleep(20)
             except:
                 sleep(10)
 
@@ -939,8 +947,8 @@ class Monitor:
             try:
                 valid_excpetions = get_valid_exceptions(email, key, opened_only=opened_only)
                 now = int(time() * 1000)
-                self.exceptions_dict[key]['timestamp'] = now
                 self.exceptions_dict[key]['result'] = valid_excpetions
+                self.exceptions_dict[key]['timestamp'] = now
                 sleep(60)
             except:
                 sleep(20)
@@ -950,8 +958,8 @@ class Monitor:
             try:
                 valid_downtimes = get_valid_downtimes(email, key, opened_only=opened_only)
                 now = int(time() * 1000)
-                self.downtimes_dict[key]['timestamp'] = now
                 self.downtimes_dict[key]['result'] = valid_downtimes
+                self.downtimes_dict[key]['timestamp'] = now
                 sleep(60)
             except:
                 sleep(20)
@@ -961,8 +969,8 @@ class Monitor:
             try:
                 valid_nodes = get_valid_nodes(email, key)
                 now = int(time() * 1000)
-                self.nodes_dict[key]['timestamp'] = now
                 self.nodes_dict[key]['result'] = valid_nodes
+                self.nodes_dict[key]['timestamp'] = now
                 sleep(60)
             except:
                 sleep(20)
@@ -972,18 +980,29 @@ class Monitor:
             try:
                 valid_chals = get_valid_chals(email, key)
                 now = int(time() * 1000)
-                self.chals_dict[key]['timestamp'] = now
                 self.chals_dict[key]['result'] = valid_chals
+                self.chals_dict[key]['timestamp'] = now
                 sleep(60)
             except:
                 sleep(20)
+
+    def validate_server(self, server):
+        if self.servers_status_dict[server]['result'] == 200:
+            return True
+        else:
+            logger.warning('!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!')
+            logger.warning('server down, server: {}'.format(server))
+            logger.warning('!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!')
+            return False
+        
 
     def challenger(self, queue):
         while True:
             node = queue.get()
             host_id, node_id = node.location
             curserver = node.curserver
-            do_challenge(host_id, node_id, curserver)
+            if self.validate_server(curserver):
+                do_challenge(host_id, node_id, curserver)
 
     def handle_downtime(self, node, dt):
         host_id, node_id = dt.location
@@ -1006,7 +1025,8 @@ class Monitor:
             if dtype == 'sys':
                 restart_secnode(host_id, node_id)
             elif dtype == 'zend':
-                snset(host_id, node_id, 'home', dt_home)
+                if self.validate_server(dt_home):
+                    snset(host_id, node_id, 'home', dt_home)
                 restart_secnode(host_id, node_id)
             else:
                 logger.warning('!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!')
@@ -1016,7 +1036,7 @@ class Monitor:
     def downtime_handler(self, queue):
         while True:
             node, dt = queue.get()
-            handle_downtime(node, dt)
+            self.handle_downtime(node, dt)
 
     def handle_exception(self, node, ex):
         host_id, node_id = ex.location
@@ -1035,10 +1055,12 @@ class Monitor:
             if etype == 'cert':
                 restart_secnode(host_id, node_id)
             elif etype == 'peers':
-                snset(host_id, node_id, 'home', ex_home)
+                if self.validate_server(ex_home):
+                    snset(host_id, node_id, 'home', ex_home)
                 restart_secnode(host_id, node_id)
             elif etype == 'chal':
-                snset(host_id, node_id, 'home', ex_home)
+                if self.validate_server(ex_home):
+                    snset(host_id, node_id, 'home', ex_home)
                 restart_secnode(host_id, node_id)
             else:
                 logger.warning('!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!')
@@ -1048,9 +1070,12 @@ class Monitor:
     def exception_handler(self, queue):
         while True:
             node, ex = queue.get()
-            handle_exception(node, ex)
+            self.handle_exception(node, ex)
 
-    def main_loop(self):
+    def main_loop(self, exclude=None, only=None):
+        logging.basicConfig(level=logging.DEBUG, format='%(asctime)s %(filename)10s:%(lineno)-4s - %(levelname)-5s %(message)s')
+        logging.getLogger('requests').setLevel(logging.WARNING)
+        logging.getLogger('urllib3').setLevel(logging.WARNING)
         thread_list = []
         for email, key in apikeys.items():
             t = Thread(
@@ -1109,6 +1134,11 @@ class Monitor:
         t.start()
         thread_list.append(t)
 
+        if exclude is None:
+            exclude = default_exclude_hosts
+        if only is None:
+            only = default_only_hosts
+
         while True:
             exception_list = []
             downtime_list = []
@@ -1156,7 +1186,15 @@ class Monitor:
                     everything_ready = False
                     break
                 else:
-                    exception_list += self.exceptions_dict[key]['result']
+                    valid_exceptions = self.exceptions_dict[key]['result']
+                    for ex in valid_exceptions:
+                        host_id = ex.location[0]
+                        if only:
+                            if host_id in only:
+                                exception_list.append(ex)
+                        else:
+                            if host_id not in exclude:
+                                exception_list.append(ex)
 
                 if key not in self.downtimes_dict:
                     logger.warning('key not available in downtimes_dict')
@@ -1168,7 +1206,15 @@ class Monitor:
                     everything_ready = False
                     break
                 else:
-                    downtime_list += self.downtimes_dict[key]['result']
+                    valid_downtimes = self.downtimes_dict[key]['result']
+                    for dt in valid_downtimes:
+                        host_id = dt.location[0]
+                        if only:
+                            if host_id in only:
+                                downtime_list.append(dt)
+                        else:
+                            if host_id not in exclude:
+                                downtime_list.append(dt)
 
                 if key not in self.nodes_dict:
                     logger.warning('key not available in nodes_dict')
@@ -1180,7 +1226,15 @@ class Monitor:
                     everything_ready = False
                     break
                 else:
-                    node_list += self.nodes_dict[key]['result']
+                    valid_nodes = self.nodes_dict[key]['result']
+                    for node in valid_nodes:
+                        host_id = node.location[0]
+                        if only:
+                            if host_id in only:
+                                node_list.append(node)
+                        else:
+                            if host_id not in exclude:
+                                node_list.append(node)
 
                 if key not in self.chals_dict:
                     logger.warning('key not available in chals_dict')
@@ -1192,7 +1246,15 @@ class Monitor:
                     everything_ready = False
                     break
                 else:
-                    chal_list += self.chals_dict[key]['result']
+                    valid_chals = self.chals_dict[key]['result']
+                    for chal in valid_chals:
+                        host_id = chal.location[0]
+                        if only:
+                            if host_id in only:
+                                chal_list.append(chal)
+                        else:
+                            if host_id not in exclude:
+                                chal_list.append(chal)
 
             if not everything_ready:
                 sleep(10)
@@ -1209,8 +1271,8 @@ class Monitor:
             node_dict = {}
             for node in node_list:
                 node_dict[node.fqdn] = node
-            host_id, node_id = node.location
-            node_dict_by_host[host_id].append(node)
+                host_id, node_id = node.location
+                node_dict_by_host[host_id].append(node)
 
             for chal in chal_list:
                 fqdn = chal.fqdn
@@ -1234,7 +1296,16 @@ class Monitor:
                     if dt.duration > 15 * 60 * 1000:
                         downtime_handler_queue.put((node, dt))
 
+
             for host_id, nodes in node_dict_by_host.items():
+                for node in nodes:
+                    chals = node.chals
+                    node.chals = sorted(chals, key=lambda chal:chal.start_at, reverse=True)
+                    exceptions = node.exceptions
+                    node.exceptions = sorted(exceptions, key=lambda ex:ex.start_at, reverse=True)
+                    downtimes = node.downtimes
+                    node.downtimes = sorted(downtimes, key=lambda dt:dt.start_at, reverse=True)
+
                 check_chals(host_id, nodes, challenge_handler_queue)
 
             sleep(600)
