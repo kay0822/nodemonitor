@@ -787,11 +787,15 @@ def exception_handler(queue):
         node, ex = queue.get()
         handle_exception(node, ex)
 
-def do_challenge(host_id, node_id, curserver):
+def do_challenge(host_id, node_id, curserver=None):
     try:
         logger.info('===> do chanllenge, host_id: {}, node_id: {}'.format(host_id, node_id))
         # cmd = 'ssh z{} snchallenge {}'.format(host_id, node_id)
-        cmd = 'ssh z{} \'curl -s "https://{}.zensystem.io/$(snget {} taddr)/$(snget {} nodeid)/send"\''.format(host_id, curserver, node_id, node_id)
+        if curserver is None:
+            
+            cmd = 'ssh z{} \'curl -s "https://$(snget {} home).zensystem.io/$(snget {} taddr)/$(snget {} nodeid)/send"\''.format(host_id, node_id, node_id, node_id)
+        else:
+            cmd = 'ssh z{} \'curl -s "https://{}.zensystem.io/$(snget {} taddr)/$(snget {} nodeid)/send"\''.format(host_id, curserver, node_id, node_id)
         print(cmd)
         output = subprocess.check_output(cmd, shell=True)
         logger.info('===> challenge output: {}, host_id: {}, node_id: {}'.format(output, host_id, node_id))
