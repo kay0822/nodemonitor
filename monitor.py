@@ -16,8 +16,20 @@ https://securenodes.eu.zensystem.io/api/nodes/my/challenges?key=8a3dd03cc87f9e61
 https://securenodes.eu.zensystem.io/api/nodes/89156/detail?key=8a3dd03cc87f9e61ee346493a6dfd45045c1a246
 
 """
-ROWS = 3000
-apikeys = {'zenminer@sina.com':'8a3dd03cc87f9e61ee346493a6dfd45045c1a246','lovezencash@126.com':'b137e77a4bb22aeb7387c1ca5f429b5b940f4985','lovezencash@sina.com':'883bf0a0b4a7d3cd6a2b1da67f98fe8c57762c95'}
+ROWS = 2000
+apikeys = {
+    'zenminer@sina.com': '8a3dd03cc87f9e61ee346493a6dfd45045c1a246',
+    'lovezencash@126.com': 'b137e77a4bb22aeb7387c1ca5f429b5b940f4985',
+    # 
+    'lovezencash@sina.com': '883bf0a0b4a7d3cd6a2b1da67f98fe8c57762c95',
+    # 
+    # 'ningding75052284@sina.com': '8349d871b6eaaf7052b1ada4a392c4784ce5ca81',
+    # 'junnian67449598@sina.com': ' 4b44c621f47ecb52c301405ce118552dec4df469',
+    # 'qisheng918396@sina.com': 'f3ec591ba99042a21d79cdf7baaf6e3fb21654a7',
+    # 'kaiyu690205@sina.com': 'd8c426e6b6114c8e39fefae76140912777e544b3',
+    # 'lijing316095@sina.com': '7102774cab721985209d8d828b585ca510e07c99',
+    # 'zhujiao115402@sina.com': 'b6fd1ce152de1a937bee909ae337194743b3bf6c',
+}
 base_url = 'https://securenodes.eu.zensystem.io'
 default_exclude_hosts = [17, 18]
 # default_only_hosts = [
@@ -30,6 +42,7 @@ default_exclude_hosts = [17, 18]
 #     38,
 # ]
 default_only_hosts = [16, 19, 20] + list(range(21, 31)) + list(range(31, 41))
+default_hosts_in_leo_home = [20]
 default_ignore_etype = ('stkbal', 'chalmax', 'stk42')
 default_ignore_dtype = ()
 
@@ -77,7 +90,7 @@ class Node:
 
         try:
             self.location = parse_fqdn(self.fqdn)
-        except Exception:
+        except:
             self.location = None
 
     def is_valid(self):
@@ -164,7 +177,7 @@ class Chal:
         self.reason = reason
         try:
             self.location = parse_fqdn(self.fqdn)
-        except Exception:
+        except:
             self.location = None
 
     def is_pass(self):
@@ -223,7 +236,7 @@ class Downtime:
         self.dtype = dtype
         try:
             self.location = parse_fqdn(self.fqdn)
-        except Exception:
+        except:
             self.location = None
 
     def is_valid(self):
@@ -281,7 +294,7 @@ class Ex:
 
         try:
             self.location = parse_fqdn(self.fqdn)
-        except Exception:
+        except:
             self.location = None
 
     def is_valid(self):
@@ -454,7 +467,12 @@ def get_valid_chals(email, key):
     chals = get_chals(key)
     for chal in chals:
         if chal.is_valid() and not chal.is_expired(now=now):
-            valid_chals.append(chal)
+            if chal.result == 'overlap':
+                # 第一个挑战有可能是overlap的，需要把overlap的去掉
+                #logger.debug('overlap challenge marked as invalid')
+                pass
+            else:
+                valid_chals.append(chal)
         else:
             pass  # invalid
     return valid_chals
@@ -809,8 +827,6 @@ def check_chals(host_id, nodes, queue):
             node.dump()
     else:
         # 取每个节点的第一个有效挑战，排序
-        # chals = [node.chals[0] for node in nodes if not node.exceptions and not node.downtimes and node.chals]
-        # sorted_chals = sorted(chals, key=lambda chal: chal.receive_at)  # 从小到大
         valid_chal_nodes = [node for node in nodes if not node.exceptions and not node.downtimes and node.chals]
         sorted_nodes = sorted(valid_chal_nodes, key=lambda node: node.chals[0].receive_at)  # 从小到大
 
@@ -819,7 +835,7 @@ def check_chals(host_id, nodes, queue):
             logger.debug('less than 3 sorted_nodes, ignored, sorted_nodes: {}, nodes: {}'.format(sorted_nodes, nodes))
             return
 
-        expected_duration = 25 * 60 * 1000  # 假设允许最小间隔为25分钟
+        expected_duration = 30 * 60 * 1000  # 假设允许最小间隔为30分钟
         durations = [(sorted_nodes[i+1].chals[0].start_at - sorted_nodes[i].chals[0].receive_at) for i in range(0, len(sorted_nodes) - 1)]
         min_duration = min(durations)
 
@@ -1164,6 +1180,8 @@ class Monitor:
                         pass
                     elif status_code == 502:
                         down_server_list.append(server)
+                    elif status_code == 521:
+                        down_server_list.append(server)
                     else:
                         logger.warning('!!!!!!!!!!!!!!!!!!!!!!!')
                         logger.warning('status_code unexpected, status_code: '.format(status_code))
@@ -1177,7 +1195,7 @@ class Monitor:
             everything_ready = True
             for email, key in apikeys.items():
                 if key not in self.exceptions_dict:
-                    logger.warning('key not available in exceptions_dict')
+                    logger.warning('key not available in exceptions_dict, email: {}, key: {}'.format(email, key))
                     everything_ready = False
                     continue
                 exceptions_timestamp = self.exceptions_dict[key]['timestamp']
@@ -1197,7 +1215,7 @@ class Monitor:
                                 exception_list.append(ex)
 
                 if key not in self.downtimes_dict:
-                    logger.warning('key not available in downtimes_dict')
+                    logger.warning('key not available in downtimes_dict, email: {}, key: {}'.format(email, key))
                     everything_ready = False
                     continue
                 downtimes_timestamp = self.downtimes_dict[key]['timestamp']
@@ -1217,7 +1235,7 @@ class Monitor:
                                 downtime_list.append(dt)
 
                 if key not in self.nodes_dict:
-                    logger.warning('key not available in nodes_dict')
+                    logger.warning('key not available in nodes_dict, email: {}, key: {}'.format(email, key))
                     everything_ready = False
                     continue
                 nodes_timestamp = self.nodes_dict[key]['timestamp']
@@ -1237,7 +1255,7 @@ class Monitor:
                                 node_list.append(node)
 
                 if key not in self.chals_dict:
-                    logger.warning('key not available in chals_dict')
+                    logger.warning('key not available in chals_dict, email: {}, key: {}'.format(email, key))
                     everything_ready = False
                     continue
                 chals_timstamp = self.chals_dict[key]['timestamp']
@@ -1285,7 +1303,7 @@ class Monitor:
                 if fqdn in node_dict:
                     node = node_dict[fqdn]
                     node.exceptions.append(ex)
-                    if ex.duration > 15 * 60 * 1000:
+                    if ex.duration > 15 * 60 * 1000 or now - ex.check_at > 15 * 60 * 1000:
                         exception_handler_queue.put((node, ex))
 
             for dt in downtime_list:
@@ -1293,7 +1311,7 @@ class Monitor:
                 if fqdn in node_dict:
                     node = node_dict[fqdn]
                     node.downtimes.append(dt)
-                    if dt.duration > 15 * 60 * 1000:
+                    if dt.duration > 15 * 60 * 1000 or now - dt.check_at > 15 * 60 * 1000:
                         downtime_handler_queue.put((node, dt))
 
 

@@ -15,6 +15,14 @@ for n in es_dict:
              if host_id in [17, 18]:
                  continue
              print(ns_dict[n], e)
-             #print(n, e)
-             # host_id, node_id = e.location
-             # restart_secnode(host_id, node_id)
+             #  # snset(host_id, node_id, 'home', 'ts2.eu')
+             #  snset(host_id, node_id, 'rpchost', 'bibenwei.com')
+             #  if host_id == 28:
+             #      snset(host_id, node_id, 'rpcport', 22203)
+             #  elif host_id == 29:
+             #      snset(host_id, node_id, 'rpcport', 22204)
+             #  elif host_id == 19 and node_id < 30:
+             #      snset(host_id, node_id, 'rpcport', 22201)
+             #  elif host_id == 19:
+             #      snset(host_id, node_id, 'rpcport', 22202)
+             #  restart_secnode(host_id, node_id)
