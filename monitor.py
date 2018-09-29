@@ -9,6 +9,7 @@ from datetime import datetime
 from collections import defaultdict
 import subprocess
 logger = logging.getLogger(__name__)
+from personal import *
 
 """
 https://securenodes.eu.zensystem.io/api/nodes/my/list?key=8a3dd03cc87f9e61ee346493a6dfd45045c1a246
@@ -17,19 +18,11 @@ https://securenodes.eu.zensystem.io/api/nodes/89156/detail?key=8a3dd03cc87f9e61e
 
 """
 ROWS = 2000
-apikeys = {
-    'zenminer@sina.com': '8a3dd03cc87f9e61ee346493a6dfd45045c1a246',
-    'lovezencash@126.com': 'b137e77a4bb22aeb7387c1ca5f429b5b940f4985',
-    # 
-    'lovezencash@sina.com': '883bf0a0b4a7d3cd6a2b1da67f98fe8c57762c95',
-    # 
-    # 'ningding75052284@sina.com': '8349d871b6eaaf7052b1ada4a392c4784ce5ca81',
-    # 'junnian67449598@sina.com': ' 4b44c621f47ecb52c301405ce118552dec4df469',
-    # 'qisheng918396@sina.com': 'f3ec591ba99042a21d79cdf7baaf6e3fb21654a7',
-    # 'kaiyu690205@sina.com': 'd8c426e6b6114c8e39fefae76140912777e544b3',
-    # 'lijing316095@sina.com': '7102774cab721985209d8d828b585ca510e07c99',
-    # 'zhujiao115402@sina.com': 'b6fd1ce152de1a937bee909ae337194743b3bf6c',
-}
+
+for email, key in apikeys.items():
+    email = email.strip()
+    key = key.strip()
+
 base_url = 'https://securenodes.eu.zensystem.io'
 default_exclude_hosts = [17, 18]
 # default_only_hosts = [
@@ -818,6 +811,10 @@ def challenger(queue):
     
 def check_chals(host_id, nodes, queue):
     logger.info('>>>>>>>>>>>>>>> check host: {} <<<<<<<<<<<<<<<'.format(host_id))
+    now = int(time() * 1000)
+    expected_duration = 30 * 60 * 1000  # 假设允许最小间隔为30分钟
+    predict_duration = (3 * 3600 * 24 + 600) * 1000  # 3天10分钟
+    interval = 50 * 60 * 1000  # 50分钟, 保证最后一次挑战到now至少一个interval， 且now到最近的预期挑战也是至少一个interval
 
     not_pass_nodes = [node for node in nodes if not node.is_pass(ignore=True)]
 
@@ -825,32 +822,22 @@ def check_chals(host_id, nodes, queue):
         logger.info('[ILLNESS] host {} NOT all pass'.format(host_id))
         for node in not_pass_nodes:
             node.dump()
-    else:
-        # 取每个节点的第一个有效挑战，排序
-        valid_chal_nodes = [node for node in nodes if not node.exceptions and not node.downtimes and node.chals]
-        sorted_nodes = sorted(valid_chal_nodes, key=lambda node: node.chals[0].receive_at)  # 从小到大
 
-        # 如果小于3个节点，无需处理
-        if len(sorted_nodes) < 3:
-            logger.debug('less than 3 sorted_nodes, ignored, sorted_nodes: {}, nodes: {}'.format(sorted_nodes, nodes))
-            return
+        if len(not_pass_nodes) == 1:
+            # 取所有pass的节点的第一个有效挑战，排序
+            valid_chal_nodes = [node for node in nodes if node not in not_pass_nodes and not node.exceptions and not node.downtimes and node.chals]
+            sorted_nodes = sorted(valid_chal_nodes, key=lambda node: node.chals[0].receive_at)  # 从小到大
+            if len(sorted_nodes) < 3:
+                logger.debug('less than 3 sorted_nodes, ignored, sorted_nodes: {}, nodes: {}'.format(sorted_nodes, nodes))
+                return
 
-        expected_duration = 30 * 60 * 1000  # 假设允许最小间隔为30分钟
-        durations = [(sorted_nodes[i+1].chals[0].start_at - sorted_nodes[i].chals[0].receive_at) for i in range(0, len(sorted_nodes) - 1)]
-        min_duration = min(durations)
+            durations = [(sorted_nodes[i+1].chals[0].start_at - sorted_nodes[i].chals[0].receive_at) for i in range(0, len(sorted_nodes) - 1)]
+            min_duration = min(durations)
 
-        index = durations.index(min_duration)  # durations的index映射到sorted_chals
-
-        # logger.debug('min_duration: {}, expected_duration: {}'.format(min_duration, expected_duration))
-        if min_duration < expected_duration:
-            target_node = sorted_nodes[index]
-            target_node_after = sorted_nodes[index+1]
+            target_node = not_pass_nodes[0]
 
             last_chal_receive_at = sorted_nodes[-1].chals[0].receive_at
-            now = int(time() * 1000)
             nearest_predict_chal_start_at = now
-            predict_duration = (3 * 3600 * 24 + 600) * 1000  # 3天10分钟
-            interval = 50 * 60 * 1000  # 50分钟, 保证最后一次挑战到now至少一个interval， 且now到最近的预期挑战也是至少一个interval
             for node in sorted_nodes:
                 predict_start_at = node.chals[0].receive_at + predict_duration
                 if predict_start_at < now - 20 * 60 * 1000:
@@ -863,7 +850,44 @@ def check_chals(host_id, nodes, queue):
             if (last_chal_receive_at + interval) < now < (nearest_predict_chal_start_at - interval):
                 logger.info('[OK] host {} start challenge, node: {}'.format(host_id, target_node))
                 queue.put(target_node)
+    
+            else:
+                logger.info('[GOOD] host {} wait for appropriate time to challenge, min_duration: {}'.format(host_id, min_duration))
+            
+    else:
+        # 取每个节点的第一个有效挑战，排序
+        valid_chal_nodes = [node for node in nodes if not node.exceptions and not node.downtimes and node.chals]
+        sorted_nodes = sorted(valid_chal_nodes, key=lambda node: node.chals[0].receive_at)  # 从小到大
 
+        # 如果小于3个节点，无需处理
+        if len(sorted_nodes) < 3:
+            logger.debug('less than 3 sorted_nodes, ignored, sorted_nodes: {}, nodes: {}'.format(sorted_nodes, nodes))
+            return
+
+        durations = [(sorted_nodes[i+1].chals[0].start_at - sorted_nodes[i].chals[0].receive_at) for i in range(0, len(sorted_nodes) - 1)]
+        min_duration = min(durations)
+
+        index = durations.index(min_duration)  # durations的index映射到sorted_chals
+
+        # logger.debug('min_duration: {}, expected_duration: {}'.format(min_duration, expected_duration))
+        if min_duration < expected_duration:
+            target_node = sorted_nodes[index]
+            target_node_after = sorted_nodes[index+1]
+
+            last_chal_receive_at = sorted_nodes[-1].chals[0].receive_at
+            nearest_predict_chal_start_at = now
+            for node in sorted_nodes:
+                predict_start_at = node.chals[0].receive_at + predict_duration
+                if predict_start_at < now - 20 * 60 * 1000:
+                    # 某些节点挑战间隔超过3天, 忽略这些节点
+                    continue
+                else:
+                    nearest_predict_chal_start_at  = predict_start_at
+                    break
+
+            if (last_chal_receive_at + interval) < now < (nearest_predict_chal_start_at - interval):
+                logger.info('[OK] host {} start challenge, node: {}'.format(host_id, target_node))
+                queue.put(target_node)
             else:
                 logger.info('[GOOD] host {} wait for appropriate time to challenge, min_duration: {}'.format(host_id, min_duration))
         else:
