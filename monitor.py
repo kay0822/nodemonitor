@@ -34,7 +34,7 @@ default_exclude_hosts = [17, 18]
 #     31,
 #     38,
 # ]
-default_only_hosts = [16, 19, 20] + list(range(21, 31)) + list(range(31, 41))
+default_only_hosts = [19, 20] + list(range(21, 31)) + list(range(31, 44 + 1))
 default_hosts_in_leo_home = [20]
 default_ignore_etype = ('stkbal', 'chalmax', 'stk42')
 default_ignore_dtype = ()
@@ -63,7 +63,7 @@ def gen_real_url(url, server_id, region):
     return gen_url(server_id, region, chal_id)
 
 class Node:
-    def __init__(self, id, fqdn, home, curserver, email, create_at, update_at, status):
+    def __init__(self, id, fqdn, home, curserver, email, create_at, update_at, status, category):
         self.id = id
         self.fqdn = fqdn
         self.home = home
@@ -72,6 +72,7 @@ class Node:
         self.create_at = create_at
         self.update_at = update_at
         self.status = status
+        self.category = category
         self.chals = []
         self.exceptions = []
         self.downtimes = []
@@ -92,6 +93,8 @@ class Node:
         if self.status == 'dead':
             return False
         if self.create_at is None or self.update_at is None:
+            return False
+        if self.category and self.category == 'disabled':
             return False
         return True
 
@@ -355,6 +358,7 @@ def get_nodes(key):
             create_at,
             update_at,
             n['status'],
+            n.get('category', None),
         )
         nodes.append(node)
     return nodes
@@ -812,8 +816,9 @@ def challenger(queue):
 def check_chals(host_id, nodes, queue):
     logger.info('>>>>>>>>>>>>>>> check host: {} <<<<<<<<<<<<<<<'.format(host_id))
     now = int(time() * 1000)
-    expected_duration = 30 * 60 * 1000  # 假设允许最小间隔为30分钟
-    predict_duration = (3 * 3600 * 24 + 600) * 1000  # 3天10分钟
+    expected_min_duration = 30 * 60 * 1000  # 假设允许最小间隔为30分钟
+    predict_duration = (72 * 3600 + 600) * 1000  # 3天10分钟
+    manual_challenge_duration = (71.5 * 3600) * 1000
     interval = 50 * 60 * 1000  # 50分钟, 保证最后一次挑战到now至少一个interval， 且now到最近的预期挑战也是至少一个interval
 
     not_pass_nodes = [node for node in nodes if not node.is_pass(ignore=True)]
@@ -859,7 +864,7 @@ def check_chals(host_id, nodes, queue):
         valid_chal_nodes = [node for node in nodes if not node.exceptions and not node.downtimes and node.chals]
         sorted_nodes = sorted(valid_chal_nodes, key=lambda node: node.chals[0].receive_at)  # 从小到大
 
-        # 如果小于3个节点，无需处理
+        # 如果小于3个节点，无需处理, #TODO
         if len(sorted_nodes) < 3:
             logger.debug('less than 3 sorted_nodes, ignored, sorted_nodes: {}, nodes: {}'.format(sorted_nodes, nodes))
             return
@@ -869,8 +874,8 @@ def check_chals(host_id, nodes, queue):
 
         index = durations.index(min_duration)  # durations的index映射到sorted_chals
 
-        # logger.debug('min_duration: {}, expected_duration: {}'.format(min_duration, expected_duration))
-        if min_duration < expected_duration:
+        # logger.debug('min_duration: {}, expected_min_duration: {}'.format(min_duration, expected_min_duration))
+        if min_duration < expected_min_duration:
             target_node = sorted_nodes[index]
             target_node_after = sorted_nodes[index+1]
 
@@ -892,6 +897,13 @@ def check_chals(host_id, nodes, queue):
                 logger.info('[GOOD] host {} wait for appropriate time to challenge, min_duration: {}'.format(host_id, min_duration))
         else:
             logger.info('[PERFECT] host {} is healthy, min_duration: {}'.format(host_id, min_duration))
+            # 完全perfect时，选择合适的时间主动发起挑战
+            first_chal_receive_at = sorted_nodes[0].chals[0].receive_at
+            last_chal_receive_at = sorted_nodes[-1].chals[0].receive_at
+            if last_chal_receive_at < now - interval and now > first_chal_receive_at + manual_challenge_duration:
+                first_node = sorted_nodes[0]
+                logger.info('[MANUAL] challenge on host {}, node: {}'.format(host_id, first_node))
+                queue.put(first_node)
 
 
 def check():
