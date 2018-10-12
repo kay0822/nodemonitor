@@ -34,7 +34,7 @@ default_exclude_hosts = [17, 18]
 #     31,
 #     38,
 # ]
-default_only_hosts = [19, 20] + list(range(21, 31)) + list(range(31, 44 + 1))
+default_only_hosts = [19, 20] + list(range(21, 35)) + list(range(36, 46 + 1))
 default_hosts_in_leo_home = [20]
 default_ignore_etype = ('stkbal', 'chalmax', 'stk42')
 default_ignore_dtype = ()
@@ -175,6 +175,12 @@ class Chal:
             self.location = parse_fqdn(self.fqdn)
         except:
             self.location = None
+
+    def is_overlap(self):
+        if self.result == 'overlap':
+            return True
+        else:
+            return False
 
     def is_pass(self):
         if self.result == 'pass':
@@ -464,12 +470,13 @@ def get_valid_chals(email, key):
     chals = get_chals(key)
     for chal in chals:
         if chal.is_valid() and not chal.is_expired(now=now):
-            if chal.result == 'overlap':
-                # 第一个挑战有可能是overlap的，需要把overlap的去掉
-                #logger.debug('overlap challenge marked as invalid')
-                pass
-            else:
-                valid_chals.append(chal)
+            # if chal.result == 'overlap':
+            #     # 第一个挑战有可能是overlap的，需要把overlap的去掉
+            #     #logger.debug('overlap challenge marked as invalid')
+            #     pass
+            # else:
+            #     valid_chals.append(chal)
+            valid_chals.append(chal)
         else:
             pass  # invalid
     return valid_chals
@@ -816,12 +823,21 @@ def challenger(queue):
 def check_chals(host_id, nodes, queue):
     logger.info('>>>>>>>>>>>>>>> check host: {} <<<<<<<<<<<<<<<'.format(host_id))
     now = int(time() * 1000)
-    expected_min_duration = 30 * 60 * 1000  # 假设允许最小间隔为30分钟
+    expected_min_duration = 30 * 60 * 1000  # 假设允许最小间隔为30分钟, 低于这个数就要调整
     predict_duration = (72 * 3600 + 600) * 1000  # 3天10分钟
     manual_challenge_duration = (71.5 * 3600) * 1000
     interval = 50 * 60 * 1000  # 50分钟, 保证最后一次挑战到now至少一个interval， 且now到最近的预期挑战也是至少一个interval
 
     not_pass_nodes = [node for node in nodes if not node.is_pass(ignore=True)]
+
+    # 先处理overlap的情况(重启节点+重新挑战)
+    for node in not_pass_nodes:
+        if node.chals and node.chals[0].is_overlap():
+            logger.info('[OVERLAP] host_id: {}, node: {}'.format(host_id, node))
+            restart_secnode(host_id, node.id)
+            sleep(1)
+            queue.put(node)
+            return
 
     if not_pass_nodes:
         logger.info('[ILLNESS] host {} NOT all pass'.format(host_id))
@@ -902,7 +918,7 @@ def check_chals(host_id, nodes, queue):
             last_chal_receive_at = sorted_nodes[-1].chals[0].receive_at
             if last_chal_receive_at < now - interval and now > first_chal_receive_at + manual_challenge_duration:
                 first_node = sorted_nodes[0]
-                logger.info('[MANUAL] challenge on host {}, node: {}'.format(host_id, first_node))
+                logger.info('[PERFECT] manually challenge on host {}, node: {}'.format(host_id, first_node))
                 queue.put(first_node)
 
 
@@ -982,6 +998,7 @@ class Monitor:
             'ts1.eu', 'ts2.eu', 'ts3.eu', 'ts4.eu',
             'ts1.na', 'ts2.na', 'ts3.na', 'ts4.na',
         ]
+        self.server_open_chal_dict = {}
 
     def check_server_thread(self, server_name):
         while True:
@@ -990,6 +1007,25 @@ class Monitor:
                 now = int(time() * 1000)
                 self.servers_status_dict[server_name]['result'] = r.status_code
                 self.servers_status_dict[server_name]['timestamp'] = now
+                sleep(20)
+            except:
+                sleep(10)
+
+    def check_server_open_chal_thread(self):
+        while True:
+            try:
+                response = requests.get('https://securenodes.eu.zensystem.io/api/chal/open')
+                resp = response.json()
+                now = int(time() * 1000)
+                chalOpenCount = resp['chalOpenCount']
+                open_chal_dict = {}
+                for entry in chalOpenCount:
+                    server = entry['server']
+                    count = entry['count']
+                    open_chal_dict[server] = int(count)
+                    
+                self.server_open_chal_dict = open_chal_dict
+
                 sleep(20)
             except:
                 sleep(10)
@@ -1053,6 +1089,10 @@ class Monitor:
             node = queue.get()
             host_id, node_id = node.location
             curserver = node.curserver
+            if curserver not in self.server_open_chal_dict:
+                logger.warning('server {} in maintenance, can NOT challenge'.format(curserver))
+                continue
+
             if self.validate_server(curserver):
                 do_challenge(host_id, node_id, curserver)
 
@@ -1075,10 +1115,12 @@ class Monitor:
                 logger.warning('!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!')
 
             if dtype == 'sys':
+                if self.validate_server(dt_curserver):
+                    snset(host_id, node_id, 'home', dt_curserver)
                 restart_secnode(host_id, node_id)
             elif dtype == 'zend':
-                if self.validate_server(dt_home):
-                    snset(host_id, node_id, 'home', dt_home)
+                if self.validate_server(dt_curserver):
+                    snset(host_id, node_id, 'home', dt_curserver)
                 restart_secnode(host_id, node_id)
             else:
                 logger.warning('!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!')
@@ -1110,10 +1152,10 @@ class Monitor:
                 if self.validate_server(ex_home):
                     snset(host_id, node_id, 'home', ex_home)
                 restart_secnode(host_id, node_id)
-            elif etype == 'chal':
-                if self.validate_server(ex_home):
-                    snset(host_id, node_id, 'home', ex_home)
-                restart_secnode(host_id, node_id)
+            # elif etype == 'chal':
+            #     if self.validate_server(ex_home):
+            #         snset(host_id, node_id, 'home', ex_home)
+            #     restart_secnode(host_id, node_id)
             else:
                 logger.warning('!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!')
                 logger.warning('exception not handled: ex: {}'.format(ex))
@@ -1162,6 +1204,13 @@ class Monitor:
             t.start()
             thread_list.append(t)
 
+        t = Thread(
+            target=self.check_server_open_chal_thread,
+            daemon=True,
+        )
+        t.start()
+        thread_list.append(t)
+
         for server in self.servers:
             t = Thread(
                 target=self.check_server_thread,
@@ -1185,6 +1234,8 @@ class Monitor:
         t = Thread(target=self.challenger, args=(challenge_handler_queue,), daemon=True)
         t.start()
         thread_list.append(t)
+
+        sleep(3)  # wait for status collection
 
         if exclude is None:
             exclude = default_exclude_hosts
@@ -1318,8 +1369,8 @@ class Monitor:
                 logger.warning('!!!!!!!!!!!!!!!!!!!!!!!!!!!')
                 logger.warning('SERVER DOWN, down_server_list: {}'.format(down_server_list))
                 logger.warning('!!!!!!!!!!!!!!!!!!!!!!!!!!!')
-                sleep(300)
-                continue
+                #sleep(300)
+                #continue
 
             node_dict_by_host = defaultdict(lambda: [])
             node_dict = {}
@@ -1339,7 +1390,7 @@ class Monitor:
                 if fqdn in node_dict:
                     node = node_dict[fqdn]
                     node.exceptions.append(ex)
-                    if ex.duration > 15 * 60 * 1000 or now - ex.check_at > 15 * 60 * 1000:
+                    if ex.duration > 12 * 60 * 1000 or now - ex.check_at > 12 * 60 * 1000:
                         exception_handler_queue.put((node, ex))
 
             for dt in downtime_list:
@@ -1347,7 +1398,9 @@ class Monitor:
                 if fqdn in node_dict:
                     node = node_dict[fqdn]
                     node.downtimes.append(dt)
-                    if dt.duration > 15 * 60 * 1000 or now - dt.check_at > 15 * 60 * 1000:
+                    home_ne_curserver_over_5m = dt.home != dt.curserver and (dt.duration > 5 * 60 * 1000 or now - dt.check_at > 5 * 60 * 1000)
+                    over_12m = dt.duration > 12 * 60 * 1000 or now - dt.check_at > 12 * 60 * 1000
+                    if home_ne_curserver_over_5m or over_12m:
                         downtime_handler_queue.put((node, dt))
 
 
@@ -1362,7 +1415,7 @@ class Monitor:
 
                 check_chals(host_id, nodes, challenge_handler_queue)
 
-            sleep(600)
+            sleep(8 * 60)
 
 #
 # 测试函数
