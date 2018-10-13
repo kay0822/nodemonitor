@@ -34,7 +34,7 @@ default_exclude_hosts = [17, 18]
 #     31,
 #     38,
 # ]
-default_only_hosts = [19, 20] + list(range(21, 35)) + list(range(36, 46 + 1))
+default_only_hosts = list(range(21, 34 + 1)) + list(range(36, 48 + 1))
 default_hosts_in_leo_home = [20]
 default_ignore_etype = ('stkbal', 'chalmax', 'stk42')
 default_ignore_dtype = ()
@@ -96,6 +96,26 @@ class Node:
             return False
         if self.category and self.category == 'disabled':
             return False
+        return True
+
+    def is_no_exception_or_downtime(self, ignore=True):
+        """
+        @param ignore: 是否忽略那些可以忽略的type
+        """
+        if self.exceptions:
+            if ignore:
+                exs = [ex for ex in self.exceptions if not ex.can_ignore()]
+                if exs:
+                    return False
+            else:
+                return False
+        if self.downtimes:
+            if ignore:
+                dts = [dt for dt in self.downtimes if not dt.can_ignore()]
+                if dts:
+                    return False
+            else:
+                return False
         return True
 
     def is_pass(self, ignore=True):
@@ -845,6 +865,12 @@ def check_chals(host_id, nodes, queue):
             node.dump()
 
         if len(not_pass_nodes) == 1:
+            target_node = not_pass_nodes[0]
+            # 必须没有exception或downtime
+            if not target_node.is_no_exception_or_downtime(ignore=True):
+                return
+
+
             # 取所有pass的节点的第一个有效挑战，排序
             valid_chal_nodes = [node for node in nodes if node not in not_pass_nodes and not node.exceptions and not node.downtimes and node.chals]
             sorted_nodes = sorted(valid_chal_nodes, key=lambda node: node.chals[0].receive_at)  # 从小到大
@@ -854,8 +880,6 @@ def check_chals(host_id, nodes, queue):
 
             durations = [(sorted_nodes[i+1].chals[0].start_at - sorted_nodes[i].chals[0].receive_at) for i in range(0, len(sorted_nodes) - 1)]
             min_duration = min(durations)
-
-            target_node = not_pass_nodes[0]
 
             last_chal_receive_at = sorted_nodes[-1].chals[0].receive_at
             nearest_predict_chal_start_at = now
