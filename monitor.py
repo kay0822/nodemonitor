@@ -34,7 +34,7 @@ default_exclude_hosts = [17, 18]
 #     31,
 #     38,
 # ]
-default_only_hosts = list(range(31, 34 + 1)) + list(range(36, 55 + 1))
+default_only_hosts = [1] + list(range(31, 34 + 1)) + list(range(36, 55 + 1))
 default_hosts_in_leo_home = [20]
 default_ignore_etype = ('stkbal', 'chalmax', 'stk42')
 default_ignore_dtype = ()
@@ -1245,7 +1245,7 @@ class Monitor:
                 if not target_node.is_no_exception_or_downtime(ignore=True):
                     return
 
-                if target_node.result == 'confirm':
+                if target_node.chals[0].result == 'confirm':
                     return
 
                 # 取所有pass的节点的第一个有效挑战，排序
