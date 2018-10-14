@@ -12,9 +12,9 @@ logger = logging.getLogger(__name__)
 from personal import *
 
 """
-https://securenodes.eu.zensystem.io/api/nodes/my/list?key=8a3dd03cc87f9e61ee346493a6dfd45045c1a246
-https://securenodes.eu.zensystem.io/api/nodes/my/challenges?key=8a3dd03cc87f9e61ee346493a6dfd45045c1a246&page=1&rows=10000
-https://securenodes.eu.zensystem.io/api/nodes/89156/detail?key=8a3dd03cc87f9e61ee346493a6dfd45045c1a246
+https://securenodes.eu.zensystem.io/api/nodes/my/list?key=<key>
+https://securenodes.eu.zensystem.io/api/nodes/my/challenges?key=<key>&page=1&rows=10000
+https://securenodes.eu.zensystem.io/api/nodes/89156/detail?key=<key>
 
 """
 ROWS = 2000
@@ -41,8 +41,13 @@ default_ignore_dtype = ()
 
 def parse_fqdn(fqdn):
     hostname = fqdn.split('.')[0]
-    host_id, node_id = re.compile(r'z(\d+)[z|n](\d+)').match(hostname).groups()    
+    host_id, node_id = re.compile(r'[a-z]+(\d+)[a-z]+(\d+)').match(hostname).groups()
     return int(host_id), int(node_id)
+
+def parse_fqdn2(fqdn):
+    hostname = fqdn.split('.')[0]
+    host_name, node_name = re.compile(r'([a-z]+\d+)([a-z]+\d+)').match(hostname).groups()
+    return int(host_name), int(node_name)
 
 def parse_date(d):
     return int(dateutil.parser.parse(d).timestamp() * 1000) if d else d
@@ -86,6 +91,11 @@ class Node:
             self.location = parse_fqdn(self.fqdn)
         except:
             self.location = None
+
+        try:
+            self.host_name, self.node_name = parse_fqdn2(self.fqdn)
+        except:
+            self.host_name, self.node_name = None, None
 
     def is_valid(self):
         if self.location is None:
@@ -196,6 +206,11 @@ class Chal:
         except:
             self.location = None
 
+        try:
+            self.host_name, self.node_name = parse_fqdn2(self.fqdn)
+        except:
+            self.host_name, self.node_name = None, None
+
     def is_overlap(self):
         if self.result == 'overlap':
             return True
@@ -261,6 +276,11 @@ class Downtime:
         except:
             self.location = None
 
+        try:
+            self.host_name, self.node_name = parse_fqdn2(self.fqdn)
+        except:
+            self.host_name, self.node_name = None, None
+
     def is_valid(self):
         if self.location is None:
             return False
@@ -318,6 +338,11 @@ class Ex:
             self.location = parse_fqdn(self.fqdn)
         except:
             self.location = None
+
+        try:
+            self.host_name, self.node_name = parse_fqdn2(self.fqdn)
+        except:
+            self.host_name, self.node_name = None, None
 
     def is_valid(self):
         if self.location is None:
@@ -1190,6 +1215,118 @@ class Monitor:
             node, ex = queue.get()
             self.handle_exception(node, ex)
 
+    def check_chals(self, host_id, nodes, queue):
+        logger.info('>>>>>>>>>>>>>>> check host: {} <<<<<<<<<<<<<<<'.format(host_id))
+        now = int(time() * 1000)
+        expected_min_duration = 30 * 60 * 1000  # 假设允许最小间隔为30分钟, 低于这个数就要调整
+        predict_duration = (72 * 3600 + 600) * 1000  # 3天10分钟
+        manual_challenge_duration = (71.5 * 3600) * 1000
+        interval = 50 * 60 * 1000  # 50分钟, 保证最后一次挑战到now至少一个interval， 且now到最近的预期挑战也是至少一个interval
+
+        not_pass_nodes = [node for node in nodes if not node.is_pass(ignore=True)]
+
+        # 先处理overlap的情况(重启节点+重新挑战)
+        for node in not_pass_nodes:
+            if node.chals and node.chals[0].is_overlap():
+                logger.info('[OVERLAP] host_id: {}, node: {}'.format(host_id, node))
+                restart_secnode(host_id, node.id)
+                sleep(1)
+                queue.put(node)
+                return
+
+        if not_pass_nodes:
+            logger.info('[ILLNESS] host {} NOT all pass'.format(host_id))
+            for node in not_pass_nodes:
+                node.dump()
+
+            if len(not_pass_nodes) == 1:
+                target_node = not_pass_nodes[0]
+                # 必须没有exception或downtime
+                if not target_node.is_no_exception_or_downtime(ignore=True):
+                    return
+
+                # 取所有pass的节点的第一个有效挑战，排序
+                valid_chal_nodes = [node for node in nodes if
+                                    node not in not_pass_nodes and not node.exceptions and not node.downtimes and node.chals]
+                sorted_nodes = sorted(valid_chal_nodes, key=lambda node: node.chals[0].receive_at)  # 从小到大
+                if len(sorted_nodes) < 3:
+                    logger.debug(
+                        'less than 3 sorted_nodes, ignored, sorted_nodes: {}, nodes: {}'.format(sorted_nodes, nodes))
+                    return
+
+                durations = [(sorted_nodes[i + 1].chals[0].start_at - sorted_nodes[i].chals[0].receive_at) for i in
+                             range(0, len(sorted_nodes) - 1)]
+                min_duration = min(durations)
+
+                last_chal_receive_at = sorted_nodes[-1].chals[0].receive_at
+                nearest_predict_chal_start_at = now
+                for node in sorted_nodes:
+                    predict_start_at = node.chals[0].receive_at + predict_duration
+                    if predict_start_at < now - 20 * 60 * 1000:
+                        # 某些节点挑战间隔超过3天, 忽略这些节点
+                        continue
+                    else:
+                        nearest_predict_chal_start_at = predict_start_at
+                        break
+
+                if (last_chal_receive_at + interval) < now < (nearest_predict_chal_start_at - interval):
+                    logger.info('[OK] host {} start challenge, node: {}'.format(host_id, target_node))
+                    queue.put(target_node)
+
+                else:
+                    logger.info(
+                        '[GOOD] host {} wait for appropriate time to challenge, min_duration: {}'.format(host_id, min_duration))
+
+        else:
+            # 取每个节点的第一个有效挑战，排序
+            valid_chal_nodes = [node for node in nodes if not node.exceptions and not node.downtimes and node.chals]
+            sorted_nodes = sorted(valid_chal_nodes, key=lambda node: node.chals[0].receive_at)  # 从小到大
+
+            # 如果小于3个节点，无需处理, #TODO
+            if len(sorted_nodes) < 3:
+                logger.debug(
+                    'less than 3 sorted_nodes, ignored, sorted_nodes: {}, nodes: {}'.format(sorted_nodes, nodes))
+                return
+
+            durations = [(sorted_nodes[i + 1].chals[0].start_at - sorted_nodes[i].chals[0].receive_at) for i in
+                         range(0, len(sorted_nodes) - 1)]
+            min_duration = min(durations)
+
+            index = durations.index(min_duration)  # durations的index映射到sorted_chals
+
+            # logger.debug('min_duration: {}, expected_min_duration: {}'.format(min_duration, expected_min_duration))
+            if min_duration < expected_min_duration:
+                target_node = sorted_nodes[index]
+                target_node_after = sorted_nodes[index + 1]
+
+                last_chal_receive_at = sorted_nodes[-1].chals[0].receive_at
+                nearest_predict_chal_start_at = now
+                for node in sorted_nodes:
+                    predict_start_at = node.chals[0].receive_at + predict_duration
+                    if predict_start_at < now - 20 * 60 * 1000:
+                        # 某些节点挑战间隔超过3天, 忽略这些节点
+                        continue
+                    else:
+                        nearest_predict_chal_start_at = predict_start_at
+                        break
+
+                if (last_chal_receive_at + interval) < now < (nearest_predict_chal_start_at - interval):
+                    logger.info('[OK] host {} start challenge, node: {}'.format(host_id, target_node))
+                    queue.put(target_node)
+                else:
+                    logger.info(
+                        '[GOOD] host {} wait for appropriate time to challenge, min_duration: {}'.format(host_id,
+                                                                                                         min_duration))
+            else:
+                logger.info('[PERFECT] host {} is healthy, min_duration: {}'.format(host_id, min_duration))
+                # 完全perfect时，选择合适的时间主动发起挑战
+                first_chal_receive_at = sorted_nodes[0].chals[0].receive_at
+                last_chal_receive_at = sorted_nodes[-1].chals[0].receive_at
+                if last_chal_receive_at < now - interval and now > first_chal_receive_at + manual_challenge_duration:
+                    first_node = sorted_nodes[0]
+                    logger.info('[PERFECT] manually challenge on host {}, node: {}'.format(host_id, first_node))
+                    queue.put(first_node)
+
     def main_loop(self, exclude=None, only=None):
         logging.basicConfig(level=logging.DEBUG, format='%(asctime)s %(filename)10s:%(lineno)-4s - %(levelname)-5s %(message)s')
         logging.getLogger('requests').setLevel(logging.WARNING)
@@ -1437,7 +1574,7 @@ class Monitor:
                     downtimes = node.downtimes
                     node.downtimes = sorted(downtimes, key=lambda dt:dt.start_at, reverse=True)
 
-                check_chals(host_id, nodes, challenge_handler_queue)
+                self.check_chals(host_id, nodes, challenge_handler_queue)
 
             sleep(8 * 60)
 
@@ -1478,88 +1615,6 @@ def test_nodes_chals():
             for chal in chals:
                 print(chal)
             print()
-
-
-#
-# 主逻辑
-#
-
-
-# def check_chals(chal_url_dict=None):
-#     if chal_url_dict: 
-#         chal_url_dict = get_chal_url_dict()
-#     nodes_dict = get_all_nodes_chals_by_host()
-#     for host_id, nodes in nodes_dict.items():
-#         logger.info('>>>>> check host: {}'.format(host_id))
-#         not_pass_nodes = [node for node in nodes if not node.is_pass()]
-# 
-#         if not_pass_nodes:
-#             logger.info('nodes NOT all pass, host: {}, not_pass_nodes(fqdn): {}'.format(host_id, [node.fqdn for node in not_pass_nodes]))
-#             logger.debug('nodes NOT all pass, host: {}, not_pass_nodes: {}'.format(host_id, not_pass_nodes))
-#         else:
-#             logger.info('nodes all pass, host: {}'.format(host_id))
-# 
-#             # 取每个节点的第一个有效挑战，排序
-#             chals = [node.chals[0] for node in nodes]
-#             sorted_chals = sorted(chals, key=lambda chal: chal.receive_at)  # 从小到大
-# 
-#             # 如果小于3个节点，无需处理
-#             if len(sorted_chals) < 3:
-#                 continue
-# 
-#             expected_duration = 25 * 60 * 1000  # 假设允许最小间隔为25分钟
-#             durations = [(sorted_chals[i+1].start_at - sorted_chals[i].receive_at) for i in range(0, len(sorted_chals) - 1)]
-#             min_duration = min(durations)
-# 
-#             index = durations.index(min_duration)  # durations的index映射到sorted_chals
-# 
-#             logger.debug('min_duration: {}, expected_duration: {}'.format(min_duration, expected_duration))
-#             if min_duration < expected_duration:
-#                 target_node = sorted_chals[index]
-#                 target_node_after = sorted_chals[index+1]
-#                 logger.debug('target_node: {}'.format(target_node))
-#                 logger.debug('target_node_after: {}'.format(target_node_after))
-# 
-# 
-# 
-#                 last_chal_receive_at = sorted_chals[-1].receive_at
-#                 now = int(time() * 1000)
-#                 nearest_predict_chal_start_at = now
-#                 predict_duration = (3 * 3600 * 24 + 600) * 1000  # 3天10分钟
-#                 interval = 50 * 60 * 1000  # 50分钟, 保证最后一次挑战到now至少一个interval， 且now到最近的预期挑战也是至少一个interval
-#                 for chal in sorted_chals:
-#                     predict_start_at = chal.receive_at + predict_duration
-#                     if predict_start_at < now - 20 * 60 * 1000:
-#                         # 某些节点挑战间隔超过3天, 忽略这些节点
-#                         continue
-#                     else:
-#                         nearest_predict_chal_start_at  = predict_start_at
-#                         break
-# 
-#                 if (last_chal_receive_at + interval) < now < (nearest_predict_chal_start_at - interval):
-#                     logger.info('start challenge, node: {}'.format(target_node))
-#                     host_id, node_id = target_node.location
-#                     do_challenge(host_id, node_id)
-# 
-#                 else:
-#                     logger.info('time NOT ok, do NOT challenge')
-#             else:
-#                 logger.info('[OK], host {} is healthy'.format(host_id))
-#             
-# def main():
-# 
-#     logging.basicConfig(level=logging.DEBUG, format='%(asctime)s %(filename)10s:%(lineno)-4s - %(levelname)-5s %(message)s')
-#     logging.getLogger('requests').setLevel(logging.WARNING)
-#     logging.getLogger('urllib3').setLevel(logging.WARNING)
-# 
-#     while True:
-#         logger.info('----------------------------------------------------------------------------------------')
-#         chal_url_dict = get_chal_url_dict()
-#         try:
-#             check_chals(chal_url_dict)
-#         except:
-#             logger.exception('check_chals failed')            
-#         sleep(600)
 
 
 def main():
