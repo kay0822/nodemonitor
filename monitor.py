@@ -36,12 +36,12 @@ default_ignore_dtype = ()
 
 def parse_fqdn(fqdn):
     hostname = fqdn.split('.')[0]
-    host_id, node_id = re.compile(r'[a-z]+(\d+)[a-z]+(\d+)').match(hostname).groups()
+    host_id, node_id = re.compile(r'[a-z-_]+(\d+)[a-z-_]+(\d+)').match(hostname).groups()
     return int(host_id), int(node_id)
 
 def parse_fqdn2(fqdn):
     hostname = fqdn.split('.')[0]
-    host_name, node_name = re.compile(r'([a-z]+\d+)([a-z]+\d+)').match(hostname).groups()
+    host_name, node_name = re.compile(r'([a-z-_]+\d+)([a-z-_]+\d+)').match(hostname).groups()
     return int(host_name), int(node_name)
 
 def parse_date(d):
