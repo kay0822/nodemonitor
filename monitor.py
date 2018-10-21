@@ -1294,7 +1294,7 @@ class Monitor:
             key = key.strip()
             t = Thread(
                 target=self.get_valid_excpetions_thread,
-                args=(secure, email, key),
+                args=(email, key, secure),
                 daemon=True,
             )
             t.start()
@@ -1302,7 +1302,7 @@ class Monitor:
 
             t = Thread(
                 target=self.get_valid_downtimes_thread,
-                args=(secure, email, key),
+                args=(email, key, secure),
                 daemon=True,
             )
             t.start()
@@ -1310,7 +1310,7 @@ class Monitor:
 
             t = Thread(
                 target=self.get_valid_nodes_thread,
-                args=(secure, email, key),
+                args=(email, key, secure),
                 daemon=True,
             )
             t.start()
@@ -1318,7 +1318,7 @@ class Monitor:
 
             t = Thread(
                 target=self.get_valid_chals_thread,
-                args=(secure, email, key),
+                args=(email, key, secure),
                 daemon=True,
             )
             t.start()
