@@ -971,7 +971,7 @@ class Monitor:
     def __init__(self, apikeys=None, enable_super=False):
         self.apikeys = apikeys
         if self.apikeys is None:
-            self.apikeys = APIKEYS
+            self.apikeys = DEFAULT
         self.enable_super = enable_super
         self.exceptions_dict = defaultdict(lambda: {})
         self.downtimes_dict = defaultdict(lambda: {})
