@@ -1,6 +1,8 @@
 #!/usr/bin/env python
+from threading import Thread
+from queue import Queue
+
 import logging
-import os
 import requests
 import re
 from time import time, sleep
@@ -15,15 +17,9 @@ from personal import *
 https://securenodes.eu.zensystem.io/api/nodes/my/list?key=<key>
 https://securenodes.eu.zensystem.io/api/nodes/my/challenges?key=<key>&page=1&rows=10000
 https://securenodes.eu.zensystem.io/api/nodes/89156/detail?key=<key>
-
 """
 ROWS = 2000
 
-for email, key in apikeys.items():
-    email = email.strip()
-    key = key.strip()
-
-base_url = 'https://securenodes.eu.zensystem.io'
 default_exclude_hosts = [17, 18]
 # default_only_hosts = [
 #     19, 
@@ -35,7 +31,6 @@ default_exclude_hosts = [17, 18]
 #     38,
 # ]
 default_only_hosts = [1] + list(range(31, 34 + 1)) + list(range(36, 55 + 1))
-default_hosts_in_leo_home = [20]
 default_ignore_etype = ('stkbal', 'chalmax', 'stk42')
 default_ignore_dtype = ()
 
@@ -56,19 +51,9 @@ def parse_home(home):
     server_id, region = re.compile(r'ts(\d+)\.(\w+)').match(home).groups()    
     return int(server_id), region
 
-def parse_url(url):
-    protocol, server_id, region, chal_id = re.compile(r'(http://|https://)?securenodes(\d+)\.(\w+)\.zensystem.io/chal/(\w+)/single.*').match(url).groups()
-    return int(server_id), region, chal_id
-
-def gen_url(server_id, region, chal_id):
-    return 'https://securenodes{}.{}.zensystem.io/chal/{}/single'.format(server_id, region, chal_id)
-
-def gen_real_url(url, server_id, region):
-    _, _, chal_id = parse_url(url)
-    return gen_url(server_id, region, chal_id)
 
 class Node:
-    def __init__(self, id, fqdn, home, curserver, email, create_at, update_at, status, category):
+    def __init__(self, id, fqdn, home, curserver, email, create_at, update_at, status, category, secure=True):
         self.id = id
         self.fqdn = fqdn
         self.home = home
@@ -81,6 +66,7 @@ class Node:
         self.chals = []
         self.exceptions = []
         self.downtimes = []
+        self.secure = secure
 
         if self.status == 'up':
             self.is_up = True
@@ -190,7 +176,7 @@ class Node:
         )
 
 class Chal:
-    def __init__(self, id, nid, fqdn, home, start_at, receive_at, reply, run, result, reason):
+    def __init__(self, id, nid, fqdn, home, start_at, receive_at, reply, run, result, reason, secure=True):
         self.id = id
         self.nid = nid
         self.fqdn = fqdn
@@ -201,6 +187,7 @@ class Chal:
         self.run = run
         self.result = result
         self.reason = reason
+        self.secure = secure
         try:
             self.location = parse_fqdn(self.fqdn)
         except:
@@ -260,7 +247,7 @@ class Chal:
         )
 
 class Downtime:
-    def __init__(self, id, nid, fqdn, home, curserver, start_at, check_at, end_at, duration, dtype):
+    def __init__(self, id, nid, fqdn, home, curserver, start_at, check_at, end_at, duration, dtype, secure=True):
         self.id = id
         self.nid = nid
         self.fqdn = fqdn
@@ -271,6 +258,7 @@ class Downtime:
         self.end_at = end_at
         self.duration = duration
         self.dtype = dtype
+        self.secure = secure
         try:
             self.location = parse_fqdn(self.fqdn)
         except:
@@ -322,7 +310,7 @@ class Downtime:
         )
 
 class Ex:
-    def __init__(self, id, nid, fqdn, home, start_at, check_at, end_at, duration, etype, detail=None):
+    def __init__(self, id, nid, fqdn, home, start_at, check_at, end_at, duration, etype, detail=None, secure=True):
         self.id = id
         self.nid = nid 
         self.fqdn = fqdn
@@ -333,6 +321,7 @@ class Ex:
         self.duration = duration
         self.etype = etype
         self.detail = detail
+        self.secure = secure
 
         try:
             self.location = parse_fqdn(self.fqdn)
@@ -386,9 +375,16 @@ class Ex:
         )   
 
 
-def get_nodes(key):
+def get_base_url(secure=True):
+    if secure:
+        return 'https://securenodes.eu.zensystem.io'
+    else:
+        return 'https://supernodes.eu.zensystem.io'
+
+
+def get_nodes(key, secure=True):
     params = {'key': key}
-    url = '{}/api/nodes/my/list'.format(base_url)
+    url = '{}/api/nodes/my/list'.format(get_base_url(secure=secure))
     response = requests.get(
         url,
         params=params,
@@ -410,14 +406,15 @@ def get_nodes(key):
             update_at,
             n['status'],
             n.get('category', None),
+            secure=secure,
         )
         nodes.append(node)
     return nodes
             
 
-def get_chals(key):
+def get_chals(key, secure=True):
     params = {'key': key, 'page': 1, 'rows': ROWS}
-    url = '{}/api/nodes/my/challenges'.format(base_url)
+    url = '{}/api/nodes/my/challenges'.format(get_base_url(secure=secure))
     response = requests.get(
         url,
         params=params,
@@ -439,16 +436,17 @@ def get_chals(key):
             r['run'],
             r['result'],
             r['reason'],
+            secure=secure,
         )
         chals.append(chal)
     return chals
 
-def get_downtimes(key, opened_only=True):
+def get_downtimes(key, secure=True, opened_only=True):
     params = {'key': key, 'page': 1, 'rows': ROWS}
     if opened_only:
         params['status'] = 'o'
 
-    url = '{}/api/nodes/my/downtimes'.format(base_url)
+    url = '{}/api/nodes/my/downtimes'.format(get_base_url(secure=secure))
     response = requests.get(
         url,
         params=params,
@@ -471,16 +469,17 @@ def get_downtimes(key, opened_only=True):
             end_at,
             r['duration'],
             r['dtype'],
+            secure=secure,
         )
         downtimes.append(downtime)
     return downtimes
 
-def get_exceptions(key, opened_only=True):
+def get_exceptions(key, secure=True, opened_only=True):
     params = {'key': key, 'page': 1, 'rows': ROWS}
     if opened_only:
         params['status'] = 'o'
 
-    url = '{}/api/nodes/my/exceptions'.format(base_url)
+    url = '{}/api/nodes/my/exceptions'.format(get_base_url(secure=secure))
     response = requests.get(
         url,
         params=params,
@@ -504,15 +503,16 @@ def get_exceptions(key, opened_only=True):
             end_at,
             r['duration'],
             r['etype'],
+            secure=secure,
         )
         exceptions.append(ex)
     return exceptions
 
 
-def get_valid_chals(email, key):
+def get_valid_chals(email, key, secure=True):
     valid_chals = []
     now = int(time() * 1000)
-    chals = get_chals(key)
+    chals = get_chals(key, secure=secure)
     for chal in chals:
         if chal.is_valid() and not chal.is_expired(now=now):
             # if chal.result == 'overlap':
@@ -527,22 +527,22 @@ def get_valid_chals(email, key):
     return valid_chals
 
 
-def get_all_chals():
+def get_all_chals(secure=True):
     """
     dict
         key: fqdn, value: chal_list
     """
     chals_dict = defaultdict(lambda: [])
     for email, key in apikeys.items():
-        valid_chals = get_valid_chals(email, key)
+        valid_chals = get_valid_chals(email, key, secure=secure)
         for chal in valid_chals:
             chals_dict[chal.fqdn].append(chal)
     return chals_dict
 
-def get_valid_nodes(email, key):
+def get_valid_nodes(email, key, secure=True):
     valid_nodes = []
     now = int(time() * 1000)
-    nodes = get_nodes(key)
+    nodes = get_nodes(key, secure=secure)
     for node in nodes:
         if node.is_valid() and not node.is_expired(now=now):
             if node.email == email:
@@ -553,22 +553,22 @@ def get_valid_nodes(email, key):
             pass  # invalid not expired
     return valid_nodes
 
-def get_all_nodes():
+def get_all_nodes(secure=True):
     """
     dict
         key: fqdn, value: node
     """
     nodes_dict = {}
     for email, key in apikeys.items():
-        valid_nodes = get_valid_nodes(email, key)
+        valid_nodes = get_valid_nodes(email, key, secure=secure)
         for node in valid_nodes:
             nodes_dict[node.fqdn] = node
     return nodes_dict
 
-def get_valid_downtimes(email, key, opened_only=True):
+def get_valid_downtimes(email, key, secure=True, opened_only=True):
     valid_downtimes = []
     now = int(time() * 1000)
-    downtimes = get_downtimes(key, opened_only=opened_only)
+    downtimes = get_downtimes(key, secure=secure, opened_only=opened_only)
     for downtime in downtimes:
         if downtime.is_valid() and not downtime.is_expired(now=now):
             valid_downtimes.append(downtime)
@@ -576,22 +576,22 @@ def get_valid_downtimes(email, key, opened_only=True):
             pass  # invalid
     return valid_downtimes
 
-def get_all_downtimes():
+def get_all_downtimes(secure=True):
     """
     dict
         key: fqdn, value: chal_list
     """
     downtimes_dict = defaultdict(lambda: [])
     for email, key in apikeys.items():
-        valid_downtimes = get_valid_downtimes(email, key)
+        valid_downtimes = get_valid_downtimes(email, key, secure=secure)
         for downtime in valid_downtimes:
             downtimes_dict[downtime.fqdn].append(downtime)
     return downtimes_dict
 
-def get_valid_exceptions(email, key, opened_only=True):
+def get_valid_exceptions(email, key, secure=True, opened_only=True):
     valid_exceptions = []
     now = int(time() * 1000)
-    exceptions = get_exceptions(key, opened_only=opened_only)
+    exceptions = get_exceptions(key, secure=secure, opened_only=opened_only)
     for ex in exceptions:
         if ex.is_valid() and not ex.is_expired(now=now):
             valid_exceptions.append(ex)
@@ -599,14 +599,14 @@ def get_valid_exceptions(email, key, opened_only=True):
             pass  # invalid
     return valid_exceptions
     
-def get_all_exceptions():
+def get_all_exceptions(secure=True):
     """
     dict
         key: fqdn, value: chal_list
     """ 
     exceptions_dict = defaultdict(lambda: [])
     for email, key in apikeys.items():
-        valid_exceptions = get_valid_exceptions(email, key)
+        valid_exceptions = get_valid_exceptions(email, key, secure=secure)
         for ex in valid_exceptions:
             exceptions_dict[ex.fqdn].append(ex)
     return exceptions_dict
@@ -645,9 +645,6 @@ def get_all_nodes_chals_by_host():
             chals = chals_dict[node.fqdn]
             node.chals = sorted(chals, key=lambda chal:chal.start_at, reverse=True)
     return nodes_dict
-
-from threading import Thread
-from queue import Queue
 
 def get_valid_nodes_thread(queue, email, key):
     valid_nodes = None
@@ -864,7 +861,7 @@ def challenger(queue):
         host_id, node_id = node.location
         curserver = node.curserver
         do_challenge(host_id, node_id, curserver)
-    
+
 def check_chals(host_id, nodes, queue):
     logger.info('>>>>>>>>>>>>>>> check host: {} <<<<<<<<<<<<<<<'.format(host_id))
     now = int(time() * 1000)
@@ -894,7 +891,6 @@ def check_chals(host_id, nodes, queue):
             # 必须没有exception或downtime
             if not target_node.is_no_exception_or_downtime(ignore=True):
                 return
-
 
             # 取所有pass的节点的第一个有效挑战，排序
             valid_chal_nodes = [node for node in nodes if node not in not_pass_nodes and not node.exceptions and not node.downtimes and node.chals]
@@ -971,82 +967,26 @@ def check_chals(host_id, nodes, queue):
                 queue.put(first_node)
 
 
-def check():
-    exception_handler_queue = Queue()
-    downtime_handler_queue = Queue()
-    challenge_handler_queue = Queue()
-
-    thread_list = []
-    t = Thread(target=exception_handler, args=(exception_handler_queue,), daemon=True)
-    t.start()
-    thread_list.append(t)
-    t = Thread(target=downtime_handler, args=(downtime_handler_queue,), daemon=True)
-    t.start()
-    thread_list.append(t)
-    t = Thread(target=challenger, args=(challenge_handler_queue,), daemon=True)
-    t.start()
-    thread_list.append(t)
-
-    while True:
-        logger.info('----------------------------------------------------------------------------------------')
-        everything = get_everything()
-        if everything is None:
-            logger.warning('everything is None')
-            sleep(10)
-            continue
-        node_list, chal_list, exception_list, downtime_list = everything
-
-        node_dict_by_host = defaultdict(lambda: [])
-        node_dict = {}
-        for node in node_list:
-            node_dict[node.fqdn] = node
-        host_id, node_id = node.location
-        node_dict_by_host[host_id].append(node)
-
-        for chal in chal_list:
-            node = node_dict[chal.fqdn]
-            node.chals.append(chal)
-
-        for fqdn, node in node_dict.items():
-            node_dict
-
-        for ex in exception_list:
-            node = node_dict[ex.fqdn]
-            node.exceptions.append(ex)
-            if ex.duration > 15 * 60 * 1000:
-                exception_handler_queue.put((node, ex))
-
-        for dt in downtime_list:
-            node = node_dict[dt.fqdn]
-            node.downtimes.append(dt)
-            if dt.duration > 15 * 60 * 1000:
-                downtime_handler_queue.put((node, dt))
-
-        for host_id, nodes in node_dict_by_host.items():
-            for node in nodes:
-                chals = node.chals
-                node.chals = sorted(chals, key=lambda chal:chal.start_at, reverse=True)
-                exceptions = node.exceptions
-                node.exceptions = sorted(exceptions, key=lambda ex:ex.start_at, reverse=True)
-                downtimes = node.downtimes
-                node.downtimes = sorted(downtimes, key=lambda dt:dt.start_at, reverse=True)
-
-            check_chals(host_id, nodes, challenge_handler_queue)
-
-        sleep(600)
-
-
 class Monitor:
-    def __init__(self):
+    def __init__(self, apikeys=None, enable_super=False):
+        self.apikeys = apikeys
+        if self.apikeys is None:
+            self.apikeys = APIKEYS
+        self.enable_super = enable_super
         self.exceptions_dict = defaultdict(lambda: {})
         self.downtimes_dict = defaultdict(lambda: {})
         self.nodes_dict = defaultdict(lambda: {})
         self.chals_dict = defaultdict(lambda: {})
-        self.servers_status_dict = defaultdict(lambda : {})
+        self.servers_status_dict = defaultdict(lambda: {})
         self.servers = [
             'ts1.eu', 'ts2.eu', 'ts3.eu', 'ts4.eu',
             'ts1.na', 'ts2.na', 'ts3.na', 'ts4.na',
         ]
+        if self.enable_super:
+            self.servers += [
+                'xns1.eu', 'xns2.eu', 'xns3.eu', 'xns4.eu',
+                'xns1.na', 'xns2.na', 'xns3.na', 'xns4.na',
+            ]
         self.server_open_chal_dict = {}
 
     def check_server_thread(self, server_name):
@@ -1061,17 +1001,30 @@ class Monitor:
                 sleep(10)
 
     def check_server_open_chal_thread(self):
+        # {"chalOpenCount": [{"server": "xns1.eu", "count": 1}]}
+        # 如果当前没有挑战，则不会出现对应的key，所以服务器是否可以能发挑战并不能以此为依据
+        # 暂时没有更好的方法
         while True:
             try:
+                open_chal_dict = {}
+                now = int(time() * 1000)
+
                 response = requests.get('https://securenodes.eu.zensystem.io/api/chal/open')
                 resp = response.json()
-                now = int(time() * 1000)
                 chalOpenCount = resp['chalOpenCount']
-                open_chal_dict = {}
                 for entry in chalOpenCount:
                     server = entry['server']
                     count = entry['count']
                     open_chal_dict[server] = int(count)
+
+                if self.enable_super:
+                    response = requests.get('https://supernodes.eu.zensystem.io/api/chal/open')
+                    resp = response.json()
+                    chalOpenCount = resp['chalOpenCount']
+                    for entry in chalOpenCount:
+                        server = entry['server']
+                        count = entry['count']
+                        open_chal_dict[server] = int(count)
                     
                 self.server_open_chal_dict = open_chal_dict
 
@@ -1079,10 +1032,10 @@ class Monitor:
             except:
                 sleep(10)
 
-    def get_valid_excpetions_thread(self, email, key, opened_only=True):
+    def get_valid_excpetions_thread(self, email, key, secure=True, opened_only=True):
         while True:
             try:
-                valid_excpetions = get_valid_exceptions(email, key, opened_only=opened_only)
+                valid_excpetions = get_valid_exceptions(email, key, secure=secure, opened_only=opened_only)
                 now = int(time() * 1000)
                 self.exceptions_dict[key]['result'] = valid_excpetions
                 self.exceptions_dict[key]['timestamp'] = now
@@ -1090,10 +1043,10 @@ class Monitor:
             except:
                 sleep(20)
 
-    def get_valid_downtimes_thread(self, email, key, opened_only=True):
+    def get_valid_downtimes_thread(self, email, key, secure=True, opened_only=True):
         while True:
             try:
-                valid_downtimes = get_valid_downtimes(email, key, opened_only=opened_only)
+                valid_downtimes = get_valid_downtimes(email, key, secure=secure, opened_only=opened_only)
                 now = int(time() * 1000)
                 self.downtimes_dict[key]['result'] = valid_downtimes
                 self.downtimes_dict[key]['timestamp'] = now
@@ -1101,10 +1054,10 @@ class Monitor:
             except:
                 sleep(20)
 
-    def get_valid_nodes_thread(self, email, key):
+    def get_valid_nodes_thread(self, email, key, secure=True):
         while True:
             try:
-                valid_nodes = get_valid_nodes(email, key)
+                valid_nodes = get_valid_nodes(email, key, secure=secure)
                 now = int(time() * 1000)
                 self.nodes_dict[key]['result'] = valid_nodes
                 self.nodes_dict[key]['timestamp'] = now
@@ -1112,10 +1065,10 @@ class Monitor:
             except:
                 sleep(20)
 
-    def get_valid_chals_thread(self, email, key):
+    def get_valid_chals_thread(self, email, key, secure=True):
         while True:
             try:
-                valid_chals = get_valid_chals(email, key)
+                valid_chals = get_valid_chals(email, key, secure=secure)
                 now = int(time() * 1000)
                 self.chals_dict[key]['result'] = valid_chals
                 self.chals_dict[key]['timestamp'] = now
@@ -1131,7 +1084,6 @@ class Monitor:
             logger.warning('server down, server: {}'.format(server))
             logger.warning('!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!')
             return False
-        
 
     def challenger(self, queue):
         while True:
@@ -1335,10 +1287,14 @@ class Monitor:
         logging.getLogger('requests').setLevel(logging.WARNING)
         logging.getLogger('urllib3').setLevel(logging.WARNING)
         thread_list = []
-        for email, key in apikeys.items():
+
+        for secure, email, key in self.apikeys:
+            assert isinstance(secure, bool)
+            email = email.strip()
+            key = key.strip()
             t = Thread(
                 target=self.get_valid_excpetions_thread,
-                args=(email, key),
+                args=(secure, email, key),
                 daemon=True,
             )
             t.start()
@@ -1346,7 +1302,7 @@ class Monitor:
 
             t = Thread(
                 target=self.get_valid_downtimes_thread,
-                args=(email, key),
+                args=(secure, email, key),
                 daemon=True,
             )
             t.start()
@@ -1354,7 +1310,7 @@ class Monitor:
 
             t = Thread(
                 target=self.get_valid_nodes_thread,
-                args=(email, key),
+                args=(secure, email, key),
                 daemon=True,
             )
             t.start()
@@ -1362,7 +1318,7 @@ class Monitor:
 
             t = Thread(
                 target=self.get_valid_chals_thread,
-                args=(email, key),
+                args=(secure, email, key),
                 daemon=True,
             )
             t.start()
@@ -1444,7 +1400,10 @@ class Monitor:
                 continue
 
             everything_ready = True
-            for email, key in apikeys.items():
+            for secure, email, key in self.apikeys:
+                assert isinstance(secure, bool)
+                email = email.strip()
+                key = key.strip()
                 if key not in self.exceptions_dict:
                     logger.warning('key not available in exceptions_dict, email: {}, key: {}'.format(email, key))
                     everything_ready = False
@@ -1567,15 +1526,14 @@ class Monitor:
                     if home_ne_curserver_over_5m or over_12m:
                         downtime_handler_queue.put((node, dt))
 
-
             for host_id, nodes in node_dict_by_host.items():
                 for node in nodes:
                     chals = node.chals
-                    node.chals = sorted(chals, key=lambda chal:chal.start_at, reverse=True)
+                    node.chals = sorted(chals, key=lambda chal: chal.start_at, reverse=True)
                     exceptions = node.exceptions
-                    node.exceptions = sorted(exceptions, key=lambda ex:ex.start_at, reverse=True)
+                    node.exceptions = sorted(exceptions, key=lambda ex: ex.start_at, reverse=True)
                     downtimes = node.downtimes
-                    node.downtimes = sorted(downtimes, key=lambda dt:dt.start_at, reverse=True)
+                    node.downtimes = sorted(downtimes, key=lambda dt: dt.start_at, reverse=True)
 
                 self.check_chals(host_id, nodes, challenge_handler_queue)
 
@@ -1584,26 +1542,6 @@ class Monitor:
 #
 # 测试函数
 #
-def test_chals():    
-    chals_dict = get_all_chals()
-    fqdn_list = chals_dict.keys()
-    print(fqdn_list)
-    print(len(fqdn_list))
-
-def test_downtimes():    
-    downtimes_dict = get_all_downtimes()
-    fqdn_list = downtimes_dict.keys()
-    print(fqdn_list)
-    print(len(fqdn_list))
-
-
-def print_nodes_by_hosts():    
-    nodes_dict = get_all_nodes_by_host()
-    for host_id, nodes in nodes_dict.items():
-        print(host_id)
-        for node in nodes:
-            print(node)
-
 def test_nodes_chals():
     nodes_dict = get_all_nodes_by_host()
     chals_dict = get_all_chals()
@@ -1620,14 +1558,7 @@ def test_nodes_chals():
             print()
 
 
-def main():
-    logging.basicConfig(level=logging.DEBUG, format='%(asctime)s %(filename)10s:%(lineno)-4s - %(levelname)-5s %(message)s')
-    logging.getLogger('requests').setLevel(logging.WARNING)
-    logging.getLogger('urllib3').setLevel(logging.WARNING)
-    check()
-               
-
 if __name__ == '__main__':
     #test()
-    main()
+    pass
 
