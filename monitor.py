@@ -21,15 +21,6 @@ https://securenodes.eu.zensystem.io/api/nodes/89156/detail?key=<key>
 ROWS = 2000
 
 default_exclude_hosts = [17, 18]
-# default_only_hosts = [
-#     19, 
-#     20, 
-#     21,
-#     22,
-#     23, 
-#     31,
-#     38,
-# ]
 default_only_hosts = [1] + list(range(31, 34 + 1)) + list(range(36, 55 + 1))
 default_ignore_etype = ('stkbal', 'chalmax', 'stk42')
 default_ignore_dtype = ()
@@ -168,8 +159,6 @@ class Node:
             self.home,
             self.curserver,
             self.email,
-            #self.create_at,
-            #self.update_at,
             datetime.fromtimestamp(self.create_at / 1000),
             datetime.fromtimestamp(self.update_at / 1000),
             self.status,
@@ -948,7 +937,7 @@ def check_chals(host_id, nodes, queue):
                     # 某些节点挑战间隔超过3天, 忽略这些节点
                     continue
                 else:
-                    nearest_predict_chal_start_at  = predict_start_at
+                    nearest_predict_chal_start_at = predict_start_at
                     break
 
             if (last_chal_receive_at + interval) < now < (nearest_predict_chal_start_at - interval):
@@ -968,11 +957,23 @@ def check_chals(host_id, nodes, queue):
 
 
 class Monitor:
-    def __init__(self, apikeys=None, enable_super=False):
+    def __init__(
+        self,
+        apikeys=None,
+        enable_super=False,
+        only=None,
+        exclude=None,
+    ):
         self.apikeys = apikeys
         if self.apikeys is None:
             self.apikeys = DEFAULT
         self.enable_super = enable_super
+        self.only = only
+        if self.only is None:
+            self.only = []
+        self.exclude = exclude
+        if self.exclude is None:
+            self.exclude = []
         self.exceptions_dict = defaultdict(lambda: {})
         self.downtimes_dict = defaultdict(lambda: {})
         self.nodes_dict = defaultdict(lambda: {})
