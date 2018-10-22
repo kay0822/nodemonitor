@@ -7,7 +7,8 @@ if __name__ == '__main__':
         apikeys=personal.MY,
         enable_super=True,
         only=list(range(301, 303 + 1)) + list(range(501, 502 + 1)),
-        exclude=[]
+        exclude=[],
+        manual_challenge_duration=49 * 3600 * 1000,
     )
     m.main_loop()
     

@@ -963,6 +963,10 @@ class Monitor:
         enable_super=False,
         only=None,
         exclude=None,
+        expected_min_duration=30 * 60 * 1000,  # 假设允许最小间隔为30分钟, 低于这个数就要调整
+        predict_duration=(72 * 3600 + 600) * 1000,   # 预测跨度，默认3天又10分钟
+        manual_challenge_duration=(71.5 * 3600) * 1000,  # 手动挑战间隔
+        challenge_interval=50 * 60 * 1000,  # 50分钟, 保证最后一次挑战到now至少一个interval， 且now到最近的预期挑战也是至少一个interval
     ):
         self.apikeys = apikeys
         if self.apikeys is None:
@@ -974,6 +978,12 @@ class Monitor:
         self.exclude = exclude
         if self.exclude is None:
             self.exclude = []
+
+        self.expected_min_duration = expected_min_duration
+        self.predict_duration = predict_duration
+        self.manual_challenge_duration = manual_challenge_duration
+        self.challenge_interval = challenge_interval
+
         self.exceptions_dict = defaultdict(lambda: {})
         self.downtimes_dict = defaultdict(lambda: {})
         self.nodes_dict = defaultdict(lambda: {})
@@ -1171,10 +1181,10 @@ class Monitor:
     def check_chals(self, host_id, nodes, queue):
         logger.info('>>>>>>>>>>>>>>> check host: {} <<<<<<<<<<<<<<<'.format(host_id))
         now = int(time() * 1000)
-        expected_min_duration = 30 * 60 * 1000  # 假设允许最小间隔为30分钟, 低于这个数就要调整
-        predict_duration = (72 * 3600 + 600) * 1000  # 3天10分钟
-        manual_challenge_duration = (71.5 * 3600) * 1000
-        interval = 50 * 60 * 1000  # 50分钟, 保证最后一次挑战到now至少一个interval， 且now到最近的预期挑战也是至少一个interval
+        # expected_min_duration = 30 * 60 * 1000  # 假设允许最小间隔为30分钟, 低于这个数就要调整
+        # predict_duration = (72 * 3600 + 600) * 1000  # 3天10分钟
+        # manual_challenge_duration = (71.5 * 3600) * 1000
+        # interval = 50 * 60 * 1000  # 50分钟, 保证最后一次挑战到now至少一个interval， 且now到最近的预期挑战也是至少一个interval
 
         not_pass_nodes = [node for node in nodes if not node.is_pass(ignore=True)]
 
@@ -1217,7 +1227,7 @@ class Monitor:
                 last_chal_receive_at = sorted_nodes[-1].chals[0].receive_at
                 nearest_predict_chal_start_at = now
                 for node in sorted_nodes:
-                    predict_start_at = node.chals[0].receive_at + predict_duration
+                    predict_start_at = node.chals[0].receive_at + self.predict_duration
                     if predict_start_at < now - 20 * 60 * 1000:
                         # 某些节点挑战间隔超过3天, 忽略这些节点
                         continue
@@ -1225,7 +1235,7 @@ class Monitor:
                         nearest_predict_chal_start_at = predict_start_at
                         break
 
-                if (last_chal_receive_at + interval) < now < (nearest_predict_chal_start_at - interval):
+                if (last_chal_receive_at + self.challenge_interval) < now < (nearest_predict_chal_start_at - self.challenge_interval):
                     logger.info('[OK] host {} start challenge, node: {}'.format(host_id, target_node))
                     queue.put(target_node)
 
@@ -1251,14 +1261,14 @@ class Monitor:
             index = durations.index(min_duration)  # durations的index映射到sorted_chals
 
             # logger.debug('min_duration: {}, expected_min_duration: {}'.format(min_duration, expected_min_duration))
-            if min_duration < expected_min_duration:
+            if min_duration < self.expected_min_duration:
                 target_node = sorted_nodes[index]
                 target_node_after = sorted_nodes[index + 1]
 
                 last_chal_receive_at = sorted_nodes[-1].chals[0].receive_at
                 nearest_predict_chal_start_at = now
                 for node in sorted_nodes:
-                    predict_start_at = node.chals[0].receive_at + predict_duration
+                    predict_start_at = node.chals[0].receive_at + self.predict_duration
                     if predict_start_at < now - 20 * 60 * 1000:
                         # 某些节点挑战间隔超过3天, 忽略这些节点
                         continue
@@ -1266,7 +1276,7 @@ class Monitor:
                         nearest_predict_chal_start_at = predict_start_at
                         break
 
-                if (last_chal_receive_at + interval) < now < (nearest_predict_chal_start_at - interval):
+                if (last_chal_receive_at + self.challenge_interval) < now < (nearest_predict_chal_start_at - self.challenge_interval):
                     logger.info('[OK] host {} start challenge, node: {}'.format(host_id, target_node))
                     queue.put(target_node)
                 else:
@@ -1278,7 +1288,7 @@ class Monitor:
                 # 完全perfect时，选择合适的时间主动发起挑战
                 first_chal_receive_at = sorted_nodes[0].chals[0].receive_at
                 last_chal_receive_at = sorted_nodes[-1].chals[0].receive_at
-                if last_chal_receive_at < now - interval and now > first_chal_receive_at + manual_challenge_duration:
+                if last_chal_receive_at < now - self.challenge_interval and now > first_chal_receive_at + self.manual_challenge_duration:
                     first_node = sorted_nodes[0]
                     logger.info('[PERFECT] manually challenge on host {}, node: {}'.format(host_id, first_node))
                     queue.put(first_node)
