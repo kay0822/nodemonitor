@@ -1283,7 +1283,7 @@ class Monitor:
                     logger.info('[PERFECT] manually challenge on host {}, node: {}'.format(host_id, first_node))
                     queue.put(first_node)
 
-    def main_loop(self, exclude=None, only=None):
+    def main_loop(self):
         logging.basicConfig(level=logging.DEBUG, format='%(asctime)s %(filename)10s:%(lineno)-4s - %(levelname)-5s %(message)s')
         logging.getLogger('requests').setLevel(logging.WARNING)
         logging.getLogger('urllib3').setLevel(logging.WARNING)
@@ -1358,10 +1358,6 @@ class Monitor:
 
         sleep(3)  # wait for status collection
 
-        if exclude is None:
-            exclude = default_exclude_hosts
-        if only is None:
-            only = default_only_hosts
 
         while True:
             exception_list = []
@@ -1418,11 +1414,11 @@ class Monitor:
                     valid_exceptions = self.exceptions_dict[key]['result']
                     for ex in valid_exceptions:
                         host_id = ex.location[0]
-                        if only:
-                            if host_id in only:
+                        if self.only:
+                            if host_id in self.only:
                                 exception_list.append(ex)
                         else:
-                            if host_id not in exclude:
+                            if host_id not in self.exclude:
                                 exception_list.append(ex)
 
                 if key not in self.downtimes_dict:
@@ -1438,11 +1434,11 @@ class Monitor:
                     valid_downtimes = self.downtimes_dict[key]['result']
                     for dt in valid_downtimes:
                         host_id = dt.location[0]
-                        if only:
-                            if host_id in only:
+                        if self.only:
+                            if host_id in self.only:
                                 downtime_list.append(dt)
                         else:
-                            if host_id not in exclude:
+                            if host_id not in self.exclude:
                                 downtime_list.append(dt)
 
                 if key not in self.nodes_dict:
@@ -1458,11 +1454,11 @@ class Monitor:
                     valid_nodes = self.nodes_dict[key]['result']
                     for node in valid_nodes:
                         host_id = node.location[0]
-                        if only:
-                            if host_id in only:
+                        if self.only:
+                            if host_id in self.only:
                                 node_list.append(node)
                         else:
-                            if host_id not in exclude:
+                            if host_id not in self.exclude:
                                 node_list.append(node)
 
                 if key not in self.chals_dict:
@@ -1478,11 +1474,11 @@ class Monitor:
                     valid_chals = self.chals_dict[key]['result']
                     for chal in valid_chals:
                         host_id = chal.location[0]
-                        if only:
-                            if host_id in only:
+                        if self.only:
+                            if host_id in self.only:
                                 chal_list.append(chal)
                         else:
-                            if host_id not in exclude:
+                            if host_id not in self.exclude:
                                 chal_list.append(chal)
 
             if not everything_ready:
