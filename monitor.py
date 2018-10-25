@@ -1,4 +1,5 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
+# encoding: utf-8
 from threading import Thread
 from queue import Queue
 
@@ -903,7 +904,7 @@ def check_chals(host_id, nodes, queue):
                     break
 
             if (last_chal_receive_at + interval) < now < (nearest_predict_chal_start_at - interval):
-                logger.info('[OK] host {} start challenge, node: {}'.format(host_id, target_node))
+                logger.info('[OK] host {} start challenge, node: {}, min_duration: {}'.format(host_id, target_node, min_duration))
                 queue.put(target_node)
     
             else:
@@ -941,7 +942,7 @@ def check_chals(host_id, nodes, queue):
                     break
 
             if (last_chal_receive_at + interval) < now < (nearest_predict_chal_start_at - interval):
-                logger.info('[OK] host {} start challenge, node: {}'.format(host_id, target_node))
+                logger.info('[OK] host {} start challenge, node: {}, min_duration: {}'.format(host_id, target_node, min_duration))
                 queue.put(target_node)
             else:
                 logger.info('[GOOD] host {} wait for appropriate time to challenge, min_duration: {}'.format(host_id, min_duration))
@@ -952,7 +953,7 @@ def check_chals(host_id, nodes, queue):
             last_chal_receive_at = sorted_nodes[-1].chals[0].receive_at
             if last_chal_receive_at < now - interval and now > first_chal_receive_at + manual_challenge_duration:
                 first_node = sorted_nodes[0]
-                logger.info('[PERFECT] manually challenge on host {}, node: {}'.format(host_id, first_node))
+                logger.info('[PERFECT] manually challenge on host {}, node: {}, min_duration: {}'.format(host_id, first_node, min_duration))
                 queue.put(first_node)
 
 
@@ -967,6 +968,8 @@ class Monitor:
         predict_duration=(72 * 3600 + 600) * 1000,   # 预测跨度，默认3天又10分钟
         manual_challenge_duration=(71.5 * 3600) * 1000,  # 手动挑战间隔
         challenge_interval=50 * 60 * 1000,  # 50分钟, 保证最后一次挑战到now至少一个interval， 且now到最近的预期挑战也是至少一个interval
+        tolerance_interval=12 * 60 * 1000,  # downtime或者exception的容忍时间
+        cycle_interval=8 * 60 * 1000,
     ):
         self.apikeys = apikeys
         if self.apikeys is None:
@@ -983,6 +986,8 @@ class Monitor:
         self.predict_duration = predict_duration
         self.manual_challenge_duration = manual_challenge_duration
         self.challenge_interval = challenge_interval
+        self.tolerance_interval = tolerance_interval
+        self.cycle_interval = cycle_interval
 
         self.exceptions_dict = defaultdict(lambda: {})
         self.downtimes_dict = defaultdict(lambda: {})
@@ -1236,7 +1241,7 @@ class Monitor:
                         break
 
                 if (last_chal_receive_at + self.challenge_interval) < now < (nearest_predict_chal_start_at - self.challenge_interval):
-                    logger.info('[OK] host {} start challenge, node: {}'.format(host_id, target_node))
+                    logger.info('[OK] host {} start challenge, node: {}, min_duration: {}'.format(host_id, target_node, min_duration))
                     queue.put(target_node)
 
                 else:
@@ -1277,7 +1282,7 @@ class Monitor:
                         break
 
                 if (last_chal_receive_at + self.challenge_interval) < now < (nearest_predict_chal_start_at - self.challenge_interval):
-                    logger.info('[OK] host {} start challenge, node: {}'.format(host_id, target_node))
+                    logger.info('[OK] host {} start challenge, node: {}, min_duration: {}'.format(host_id, target_node, min_duration))
                     queue.put(target_node)
                 else:
                     logger.info(
@@ -1502,6 +1507,8 @@ class Monitor:
                 #sleep(300)
                 #continue
 
+            logger.info('******************************************************************************')
+
             node_dict_by_host = defaultdict(lambda: [])
             node_dict = {}
             for node in node_list:
@@ -1520,7 +1527,7 @@ class Monitor:
                 if fqdn in node_dict:
                     node = node_dict[fqdn]
                     node.exceptions.append(ex)
-                    if ex.duration > 12 * 60 * 1000 or now - ex.check_at > 12 * 60 * 1000:
+                    if ex.duration > self.tolerance_interval or now - ex.check_at > self.tolerance_interval:
                         exception_handler_queue.put((node, ex))
 
             for dt in downtime_list:
@@ -1529,8 +1536,8 @@ class Monitor:
                     node = node_dict[fqdn]
                     node.downtimes.append(dt)
                     home_ne_curserver_over_5m = dt.home != dt.curserver and (dt.duration > 5 * 60 * 1000 or now - dt.check_at > 5 * 60 * 1000)
-                    over_12m = dt.duration > 12 * 60 * 1000 or now - dt.check_at > 12 * 60 * 1000
-                    if home_ne_curserver_over_5m or over_12m:
+                    over_tolerance = dt.duration > self.tolerance_interval or now - dt.check_at > self.tolerance_interval
+                    if home_ne_curserver_over_5m or over_tolerance:
                         downtime_handler_queue.put((node, dt))
 
             for host_id, nodes in node_dict_by_host.items():
@@ -1544,7 +1551,7 @@ class Monitor:
 
                 self.check_chals(host_id, nodes, challenge_handler_queue)
 
-            sleep(8 * 60)
+            sleep(self.cycle_interval // 1000)
 
 #
 # 测试函数
