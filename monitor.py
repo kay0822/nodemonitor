@@ -23,6 +23,7 @@ ROWS = 2000
 
 default_exclude_hosts = [17, 18]
 default_only_hosts = [1] + list(range(31, 34 + 1)) + list(range(36, 55 + 1))
+balance_ignore_etype = ('stkbal',)
 default_ignore_etype = ('stkbal', 'stkdup', 'chalmax', 'stk42')
 default_ignore_dtype = ()
 
@@ -964,6 +965,7 @@ class Monitor:
         enable_super=False,
         only=None,
         exclude=None,
+        ignore=None,  # 可以忽略余额异常的服务器
         expected_min_duration=30 * 60 * 1000,  # 假设允许最小间隔为30分钟, 低于这个数就要调整
         predict_duration=(72 * 3600 + 600) * 1000,   # 预测跨度，默认3天又10分钟
         manual_challenge_duration=(71.5 * 3600) * 1000,  # 手动挑战间隔
@@ -981,6 +983,9 @@ class Monitor:
         self.exclude = exclude
         if self.exclude is None:
             self.exclude = []
+        self.ignore = ignore
+        if self.ignore is None:
+            self.ignore = []
 
         self.expected_min_duration = expected_min_duration
         self.predict_duration = predict_duration
@@ -1157,6 +1162,8 @@ class Monitor:
         etype = ex.etype
         if etype in default_ignore_etype:
             logger.info('exception ignored, fqdn: {}, etype: {}'.format(fqdn, etype))
+        elif etype in balance_ignore_etype and host_id in self.ignore:
+            pass
         else:
             logger.info('handle_exception, node: {}, ex: {}'.format(node, ex))
             if node_home != ex_home:
@@ -1193,7 +1200,7 @@ class Monitor:
 
         not_pass_nodes = [node for node in nodes if not node.is_pass(ignore=True)]
 
-        # 先处理overlap的情况(重启节点+重新挑战)
+        # 先处理overlap的情况(重启节点)
         for node in not_pass_nodes:
             if node.chals and node.chals[0].is_overlap():
                 logger.info('[OVERLAP] host_id: {}, node: {}'.format(host_id, node))
@@ -1429,6 +1436,11 @@ class Monitor:
                     valid_exceptions = self.exceptions_dict[key]['result']
                     for ex in valid_exceptions:
                         host_id = ex.location[0]
+                        if self.ignore:
+                            # 去除可以忽略余额相关异常的exception
+                            if host_id in self.ignore and \
+                                    ex.etype in balance_ignore_etype:
+                                continue
                         if self.only:
                             if host_id in self.only:
                                 exception_list.append(ex)
