@@ -23,7 +23,7 @@ ROWS = 2000
 
 default_exclude_hosts = [17, 18]
 default_only_hosts = [1] + list(range(31, 34 + 1)) + list(range(36, 55 + 1))
-default_ignore_etype = ('stkbal', 'chalmax', 'stk42')
+default_ignore_etype = ('stkbal', 'stkdup', 'chalmax', 'stk42')
 default_ignore_dtype = ()
 
 def parse_fqdn(fqdn):
@@ -866,7 +866,7 @@ def check_chals(host_id, nodes, queue):
     for node in not_pass_nodes:
         if node.chals and node.chals[0].is_overlap():
             logger.info('[OVERLAP] host_id: {}, node: {}'.format(host_id, node))
-            restart_secnode(host_id, node.id)
+            restart_secnode(host_id, node.location[1])
             sleep(1)
             queue.put(node)
             return
@@ -1107,7 +1107,7 @@ class Monitor:
             host_id, node_id = node.location
             curserver = node.curserver
             if curserver not in self.server_open_chal_dict:
-                logger.warning('server {} in maintenance, can NOT challenge'.format(curserver))
+                logger.warning('server {} has no open challenges, skip challenge'.format(curserver))
                 continue
 
             if self.validate_server(curserver):
@@ -1122,7 +1122,7 @@ class Monitor:
         fqdn = dt.fqdn
         dtype = dt.dtype
         if dtype in default_ignore_dtype:
-            logger.debug('downtime ignored, fqdn: {}, dtype: {}'.format(fqdn, dtype))
+            logger.info('downtime ignored, fqdn: {}, dtype: {}'.format(fqdn, dtype))
         else:
             logger.info('handle_downtime, node: {}, dt: {}'.format(node, dt))
 
@@ -1132,11 +1132,11 @@ class Monitor:
                 logger.warning('!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!')
 
             if dtype == 'sys':
-                if self.validate_server(dt_curserver):
+                if dt_home != dt_curserver and self.validate_server(dt_curserver):
                     snset(host_id, node_id, 'home', dt_curserver)
                 restart_secnode(host_id, node_id)
             elif dtype == 'zend':
-                if self.validate_server(dt_curserver):
+                if dt_home != dt_curserver and self.validate_server(dt_curserver):
                     snset(host_id, node_id, 'home', dt_curserver)
                 restart_secnode(host_id, node_id)
             else:
@@ -1156,7 +1156,7 @@ class Monitor:
         fqdn = ex.fqdn
         etype = ex.etype
         if etype in default_ignore_etype:
-            logger.debug('exception ignored, fqdn: {}, etype: {}'.format(fqdn, etype))
+            logger.info('exception ignored, fqdn: {}, etype: {}'.format(fqdn, etype))
         else:
             logger.info('handle_exception, node: {}, ex: {}'.format(node, ex))
             if node_home != ex_home:
@@ -1197,7 +1197,7 @@ class Monitor:
         for node in not_pass_nodes:
             if node.chals and node.chals[0].is_overlap():
                 logger.info('[OVERLAP] host_id: {}, node: {}'.format(host_id, node))
-                restart_secnode(host_id, node.id)
+                restart_secnode(host_id, node.location[1])
                 sleep(1)
                 queue.put(node)
                 return
@@ -1390,7 +1390,7 @@ class Monitor:
                     break
                 status_timestamp = self.servers_status_dict[server]['timestamp']
                 if now - status_timestamp > 200000:
-                    logger.warning('status_timestamp out of date, server: {}'.format(server))
+                    logger.warning('status_timestamp out of date, server: {}, now: {}, status_timestamp: {}'.format(server, now, status_timestamp))
                     server_status_ready = False
                     break
                 else:
@@ -1535,9 +1535,9 @@ class Monitor:
                 if fqdn in node_dict:
                     node = node_dict[fqdn]
                     node.downtimes.append(dt)
-                    home_ne_curserver_over_5m = dt.home != dt.curserver and (dt.duration > 5 * 60 * 1000 or now - dt.check_at > 5 * 60 * 1000)
+                    home_ne_curserver_over_3m = dt.home != dt.curserver and (dt.duration > 3 * 60 * 1000 or now - dt.check_at > 3 * 60 * 1000)
                     over_tolerance = dt.duration > self.tolerance_interval or now - dt.check_at > self.tolerance_interval
-                    if home_ne_curserver_over_5m or over_tolerance:
+                    if home_ne_curserver_over_3m or over_tolerance:
                         downtime_handler_queue.put((node, dt))
 
             for host_id, nodes in node_dict_by_host.items():
