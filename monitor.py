@@ -1191,7 +1191,7 @@ class Monitor:
             self.handle_exception(node, ex)
 
     def check_chals(self, host_id, nodes, queue):
-        logger.info('>>>>>>>>>>>>>>> check host: {} <<<<<<<<<<<<<<<'.format(host_id))
+        #logger.info('>>>>>>>>>>>>>>> check host: {} <<<<<<<<<<<<<<<'.format(host_id))
         now = int(time() * 1000)
         # expected_min_duration = 30 * 60 * 1000  # 假设允许最小间隔为30分钟, 低于这个数就要调整
         # predict_duration = (72 * 3600 + 600) * 1000  # 3天10分钟
