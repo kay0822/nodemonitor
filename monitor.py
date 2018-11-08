@@ -155,7 +155,7 @@ class Node:
         return expired
 
     def __repr__(self):
-        return 'Node(id={}, fqdn={}, home={}, curserver={}, email={}, create_at={}, update_at={}, status={})'.format(
+        return 'Node(id={}, fqdn={}, home={}, curserver={}, email={}, create_at={}, update_at={}, category={}, status={})'.format(
             self.id,
             self.fqdn,
             self.home,
@@ -163,6 +163,7 @@ class Node:
             self.email,
             datetime.fromtimestamp(self.create_at / 1000),
             datetime.fromtimestamp(self.update_at / 1000),
+            self.category,
             self.status,
         )
 
@@ -759,7 +760,7 @@ def restart_zend(host_id, node_id):
         logger.info('===> do restart_zend, host_id: {}, node_id: {}'.format(host_id, node_id))
         cmd = 'ssh z{} systemctl restart zen{}'.format(host_id, node_id)
         output = subprocess.check_output(cmd, shell=True)
-        logger.info('===> restart_zend output: {}'.format(output))
+        logger.debug('===> restart_zend output: {}'.format(output))
     except subprocess.CalledProcessError:
         logger.warning('ssh failed, host_id: {}, node_id: {}'.format(host_id, node_id))
 
@@ -768,7 +769,7 @@ def snset(host_id, node_id, attr, value):
         logger.info('===> do snset, host_id: {}, node_id: {}, attr: {}, value: {}'.format(host_id, node_id, attr, value))
         cmd = 'ssh z{} snset {} {} {}'.format(host_id, node_id, attr, value)
         output = subprocess.check_output(cmd, shell=True)
-        logger.info('===> snset output: {}'.format(output))
+        logger.debug('===> snset output: {}'.format(output))
     except subprocess.CalledProcessError:
         logger.warning('ssh failed, host_id: {}, node_id: {}'.format(host_id, node_id))
 
@@ -777,7 +778,7 @@ def restart_secnode(host_id, node_id):
         logger.info('===> do restart_secnode, host_id: {}, node_id: {}'.format(host_id, node_id))
         cmd = 'ssh z{} systemctl restart secnode{}'.format(host_id, node_id)
         output = subprocess.check_output(cmd, shell=True)
-        logger.info('===> restart_secnode output: {}'.format(output))
+        logger.debug('===> restart_secnode output: {}'.format(output))
     except subprocess.CalledProcessError:
         logger.warning('ssh failed, host_id: {}, node_id: {}'.format(host_id, node_id))
 
@@ -834,14 +835,11 @@ def do_challenge(host_id, node_id, curserver=None):
         logger.info('===> do chanllenge, host_id: {}, node_id: {}'.format(host_id, node_id))
         # cmd = 'ssh z{} snchallenge {}'.format(host_id, node_id)
         if curserver is None:
-            
             cmd = 'ssh z{} \'curl -s "https://$(snget {} home).zensystem.io/$(snget {} taddr)/$(snget {} nodeid)/send"\''.format(host_id, node_id, node_id, node_id)
         else:
             cmd = 'ssh z{} \'curl -s "https://{}.zensystem.io/$(snget {} taddr)/$(snget {} nodeid)/send"\''.format(host_id, curserver, node_id, node_id)
-        print(cmd)
         output = subprocess.check_output(cmd, shell=True)
-        logger.info('===> challenge output: {}, host_id: {}, node_id: {}'.format(output, host_id, node_id))
-        
+        logger.debug('===> challenge output: {}, host_id: {}, node_id: {}'.format(output, host_id, node_id))
     except subprocess.CalledProcessError:
         logger.warning('ssh failed, host_id: {}, node_id: {}'.format(host_id, node_id))
 
@@ -852,6 +850,7 @@ def challenger(queue):
         host_id, node_id = node.location
         curserver = node.curserver
         do_challenge(host_id, node_id, curserver)
+
 
 def check_chals(host_id, nodes, queue):
     logger.info('>>>>>>>>>>>>>>> check host: {} <<<<<<<<<<<<<<<'.format(host_id))
@@ -1297,13 +1296,18 @@ class Monitor:
                                                                                                          min_duration))
             else:
                 logger.info('[PERFECT] host {} is healthy, min_duration: {}'.format(host_id, min_duration))
-                # 完全perfect时，选择合适的时间主动发起挑战
-                first_chal_receive_at = sorted_nodes[0].chals[0].receive_at
-                last_chal_receive_at = sorted_nodes[-1].chals[0].receive_at
-                if last_chal_receive_at < now - self.challenge_interval and now > first_chal_receive_at + self.manual_challenge_duration:
-                    first_node = sorted_nodes[0]
-                    logger.info('[PERFECT] manually challenge on host {}, node: {}'.format(host_id, first_node))
-                    queue.put(first_node)
+
+                if host_id in self.ignore:
+                    # ignore列表中的机器不手动挑战
+                    pass
+                else:
+                    # 完全perfect时，选择合适的时间主动发起挑战
+                    first_chal_receive_at = sorted_nodes[0].chals[0].receive_at
+                    last_chal_receive_at = sorted_nodes[-1].chals[0].receive_at
+                    if last_chal_receive_at < now - self.challenge_interval and now > first_chal_receive_at + self.manual_challenge_duration:
+                        first_node = sorted_nodes[0]
+                        logger.info('[PERFECT] manually challenge on host {}, node: {}'.format(host_id, first_node))
+                        queue.put(first_node)
 
     def main_loop(self):
         logging.basicConfig(level=logging.DEBUG, format='%(asctime)s %(filename)10s:%(lineno)-4s - %(levelname)-5s %(message)s')
