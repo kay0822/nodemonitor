@@ -545,13 +545,14 @@ def get_valid_nodes(email, key, secure=True):
             pass  # invalid not expired
     return valid_nodes
 
-def get_all_nodes(secure=True):
+#def get_all_nodes(secure=True):
+def get_all_nodes():
     """
     dict
         key: fqdn, value: node
     """
     nodes_dict = {}
-    for email, key in apikeys.items():
+    for secure, email, key in DEFAULT:
         valid_nodes = get_valid_nodes(email, key, secure=secure)
         for node in valid_nodes:
             nodes_dict[node.fqdn] = node
@@ -965,9 +966,10 @@ class Monitor:
         only=None,
         exclude=None,
         ignore=None,  # 可以忽略余额异常的服务器
+        enable_manual_challenge=True,
+        manual_challenge_duration=(71.5 * 3600) * 1000,  # 手动挑战间隔
         expected_min_duration=30 * 60 * 1000,  # 假设允许最小间隔为30分钟, 低于这个数就要调整
         predict_duration=(72 * 3600 + 600) * 1000,   # 预测跨度，默认3天又10分钟
-        manual_challenge_duration=(71.5 * 3600) * 1000,  # 手动挑战间隔
         challenge_interval=50 * 60 * 1000,  # 50分钟, 保证最后一次挑战到now至少一个interval， 且now到最近的预期挑战也是至少一个interval
         tolerance_interval=12 * 60 * 1000,  # downtime或者exception的容忍时间
         cycle_interval=8 * 60 * 1000,
@@ -986,9 +988,10 @@ class Monitor:
         if self.ignore is None:
             self.ignore = []
 
+        self.enable_manual_challenge = enable_manual_challenge
+        self.manual_challenge_duration = manual_challenge_duration
         self.expected_min_duration = expected_min_duration
         self.predict_duration = predict_duration
-        self.manual_challenge_duration = manual_challenge_duration
         self.challenge_interval = challenge_interval
         self.tolerance_interval = tolerance_interval
         self.cycle_interval = cycle_interval
@@ -1136,11 +1139,11 @@ class Monitor:
                 logger.warning('!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!')
 
             if dtype == 'sys':
-                if dt_home != dt_curserver and self.validate_server(dt_curserver):
+                if self.validate_server(dt_curserver):
                     snset(host_id, node_id, 'home', dt_curserver)
                 restart_secnode(host_id, node_id)
             elif dtype == 'zend':
-                if dt_home != dt_curserver and self.validate_server(dt_curserver):
+                if self.validate_server(dt_curserver):
                     snset(host_id, node_id, 'home', dt_curserver)
                 restart_secnode(host_id, node_id)
             else:
@@ -1170,6 +1173,8 @@ class Monitor:
                 logger.warning('ex home not equal')
                 logger.warning('!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!')
             if etype == 'cert':
+                if self.validate_server(ex_home):
+                    snset(host_id, node_id, 'home', ex_home)
                 restart_secnode(host_id, node_id)
             elif etype == 'peers':
                 if self.validate_server(ex_home):
@@ -1219,7 +1224,7 @@ class Monitor:
                 if not target_node.is_no_exception_or_downtime(ignore=True):
                     return
 
-                if target_node.chals[0].result == 'confirm':
+                if target_node.chals[0].result in ('confirm', 'wait'):
                     return
 
                 # 取所有pass的节点的第一个有效挑战，排序
@@ -1297,17 +1302,16 @@ class Monitor:
             else:
                 logger.info('[PERFECT] host {} is healthy, min_duration: {}'.format(host_id, min_duration))
 
-                if host_id in self.ignore:
+                if self.enable_manual_challenge:
                     # ignore列表中的机器不手动挑战
-                    pass
-                else:
-                    # 完全perfect时，选择合适的时间主动发起挑战
-                    first_chal_receive_at = sorted_nodes[0].chals[0].receive_at
-                    last_chal_receive_at = sorted_nodes[-1].chals[0].receive_at
-                    if last_chal_receive_at < now - self.challenge_interval and now > first_chal_receive_at + self.manual_challenge_duration:
-                        first_node = sorted_nodes[0]
-                        logger.info('[PERFECT] manually challenge on host {}, node: {}'.format(host_id, first_node))
-                        queue.put(first_node)
+                    #if host_id not in self.ignore:
+                        # 完全perfect时，选择合适的时间主动发起挑战
+                        first_chal_receive_at = sorted_nodes[0].chals[0].receive_at
+                        last_chal_receive_at = sorted_nodes[-1].chals[0].receive_at
+                        if last_chal_receive_at < now - self.challenge_interval and now > first_chal_receive_at + self.manual_challenge_duration:
+                            first_node = sorted_nodes[0]
+                            logger.info('[PERFECT] manually challenge on host {}, node: {}'.format(host_id, first_node))
+                            queue.put(first_node)
 
     def main_loop(self):
         logging.basicConfig(level=logging.DEBUG, format='%(asctime)s %(filename)10s:%(lineno)-4s - %(levelname)-5s %(message)s')

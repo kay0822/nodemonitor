@@ -1,14 +1,24 @@
+#!/usr/bin/env python
 from monitor import *
 from threading import Thread
 from time import sleep
 
 ns_dict = get_all_nodes()
 
-a = ((32,1),(32,2),(32,3))
+
 for fqdn, node in ns_dict.items():
     host_id, node_id = node.location
-    if (host_id, node_id) in a:
+    if node.category == 'feiran3527':
         print(node)
+        snset(host_id, node_id, 'nodeid', node.id)
+        snset(host_id, node_id, 'category', 'disabled')
+        restart_secnode(host_id, node_id)
+
+# a = ((32,1),(32,2),(32,3))
+# for fqdn, node in ns_dict.items():
+#     host_id, node_id = node.location
+#     if (host_id, node_id) in a:
+#         print(node)
 
 
 # my_dict = {
