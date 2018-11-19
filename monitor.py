@@ -966,6 +966,7 @@ class Monitor:
         only=None,
         exclude=None,
         ignore=None,  # 可以忽略余额异常的服务器
+        invalid_nodeids=None,  # 无效的nodeid
         enable_manual_challenge=True,
         manual_challenge_duration=(71.5 * 3600) * 1000,  # 手动挑战间隔
         expected_min_duration=30 * 60 * 1000,  # 假设允许最小间隔为30分钟, 低于这个数就要调整
@@ -988,6 +989,9 @@ class Monitor:
         if self.ignore is None:
             self.ignore = []
 
+        self.invalid_nodeids = invalid_nodeids
+        if self.invalid_nodeids is None:
+            self.invalid_nodeids = []
         self.enable_manual_challenge = enable_manual_challenge
         self.manual_challenge_duration = manual_challenge_duration
         self.expected_min_duration = expected_min_duration
@@ -1002,7 +1006,7 @@ class Monitor:
         self.chals_dict = defaultdict(lambda: {})
         self.servers_status_dict = defaultdict(lambda: {})
         self.servers = [
-            'ts1.eu', 'ts2.eu', 'ts3.eu', 'ts4.eu',
+            'ts1.eu', 'ts2.eu', 'ts3.eu', 'ts4.eu', 'ts5.eu', 'ts6.eu',
             'ts1.na', 'ts2.na', 'ts3.na', 'ts4.na',
         ]
         if self.enable_super:
@@ -1177,6 +1181,10 @@ class Monitor:
                     snset(host_id, node_id, 'home', ex_home)
                 restart_secnode(host_id, node_id)
             elif etype == 'peers':
+                if self.validate_server(ex_home):
+                    snset(host_id, node_id, 'home', ex_home)
+                restart_secnode(host_id, node_id)
+            elif etype == 'zencfg':
                 if self.validate_server(ex_home):
                     snset(host_id, node_id, 'home', ex_home)
                 restart_secnode(host_id, node_id)
@@ -1532,6 +1540,8 @@ class Monitor:
             node_dict_by_host = defaultdict(lambda: [])
             node_dict = {}
             for node in node_list:
+                if node.id in self.invalid_nodeids:
+                    continue
                 node_dict[node.fqdn] = node
                 host_id, node_id = node.location
                 node_dict_by_host[host_id].append(node)
@@ -1540,12 +1550,20 @@ class Monitor:
                 fqdn = chal.fqdn
                 if fqdn in node_dict:
                     node = node_dict[fqdn]
+                    if node.id != chal.nid:
+                        if chal.nid not in self.invalid_nodeids:
+                            logger.warning('node.id != chal.nid, fqdn: {}'.format(fqdn))
+                        continue
                     node.chals.append(chal)
 
             for ex in exception_list:
                 fqdn = ex.fqdn
                 if fqdn in node_dict:
                     node = node_dict[fqdn]
+                    if node.id != ex.nid:
+                        if ex.nid not in self.invalid_nodeids:
+                            logger.warning('node.id != ex.nid, fqdn: {}'.format(fqdn))
+                        continue
                     node.exceptions.append(ex)
                     if ex.duration > self.tolerance_interval or now - ex.check_at > self.tolerance_interval:
                         exception_handler_queue.put((node, ex))
@@ -1554,6 +1572,10 @@ class Monitor:
                 fqdn = dt.fqdn
                 if fqdn in node_dict:
                     node = node_dict[fqdn]
+                    if node.id != dt.nid:
+                        if dt.nid not in self.invalid_nodeids:
+                            logger.warning('node.id != dt.nid, fqdn: {}'.format(fqdn))
+                        continue
                     node.downtimes.append(dt)
                     home_ne_curserver_over_3m = dt.home != dt.curserver and (dt.duration > 3 * 60 * 1000 or now - dt.check_at > 3 * 60 * 1000)
                     over_tolerance = dt.duration > self.tolerance_interval or now - dt.check_at > self.tolerance_interval
