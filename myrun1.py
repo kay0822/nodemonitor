@@ -17,10 +17,10 @@ if __name__ == '__main__':
         only=[399] + list(range(301, 324 + 1)) + list(range(401, 424 + 1)) + list(range(501, 505 + 1)) + list(range(601, 605 + 1)),
 
         ### plan a
-        ignore=[399] + list(range(401, 500 + 1)) + list(range(601, 700 + 1)),
+        #ignore=[399] + list(range(401, 500 + 1)) + list(range(601, 700 + 1)),
 
         ### plan b
-        # ignore=[399] + list(range(301, 400 + 1)) + list(range(501, 600 + 1)),
+        ignore=[399] + list(range(301, 400 + 1)) + list(range(501, 600 + 1)),
 
         enable_manual_challenge=True,
         manual_challenge_duration=56 * 3600 * 1000,
