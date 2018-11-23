@@ -380,6 +380,7 @@ def get_nodes(key, secure=True):
     response = requests.get(
         url,
         params=params,
+        timeout=30,
     )
     resp = response.json()
     _nodes = resp['nodes']
@@ -410,6 +411,7 @@ def get_chals(key, secure=True):
     response = requests.get(
         url,
         params=params,
+        timeout=30,
     )
     resp = response.json()
     rows = resp['rows']
@@ -442,6 +444,7 @@ def get_downtimes(key, secure=True, opened_only=True):
     response = requests.get(
         url,
         params=params,
+        timeout=30,
     )
     resp = response.json()
     rows = resp['rows']
@@ -475,6 +478,7 @@ def get_exceptions(key, secure=True, opened_only=True):
     response = requests.get(
         url,
         params=params,
+        timeout=30,
     )
     resp = response.json()
     rows = resp['rows']
@@ -1019,7 +1023,10 @@ class Monitor:
     def check_server_thread(self, server_name):
         while True:
             try:
-                r = requests.get('https://{server_name}.zensystem.io/api/srvstats'.format(server_name=server_name))
+                r = requests.get(
+                    'https://{server_name}.zensystem.io/api/srvstats'.format(server_name=server_name), 
+                    timeout=30,
+                )
                 now = int(time() * 1000)
                 self.servers_status_dict[server_name]['result'] = r.status_code
                 self.servers_status_dict[server_name]['timestamp'] = now
@@ -1036,7 +1043,10 @@ class Monitor:
                 open_chal_dict = {}
                 now = int(time() * 1000)
 
-                response = requests.get('https://securenodes.eu.zensystem.io/api/chal/open')
+                response = requests.get(
+                    'https://securenodes.eu.zensystem.io/api/chal/open',
+                    timeout=30,
+                )
                 resp = response.json()
                 chalOpenCount = resp['chalOpenCount']
                 for entry in chalOpenCount:
@@ -1045,7 +1055,10 @@ class Monitor:
                     open_chal_dict[server] = int(count)
 
                 if self.enable_super:
-                    response = requests.get('https://supernodes.eu.zensystem.io/api/chal/open')
+                    response = requests.get(
+                        'https://supernodes.eu.zensystem.io/api/chal/open',
+                        timeout=30,
+                    )
                     resp = response.json()
                     chalOpenCount = resp['chalOpenCount']
                     for entry in chalOpenCount:
@@ -1068,6 +1081,7 @@ class Monitor:
                 self.exceptions_dict[key]['timestamp'] = now
                 sleep(60)
             except:
+                logger.exception('get_valid_excpetions_thread failed')
                 sleep(20)
 
     def get_valid_downtimes_thread(self, email, key, secure=True, opened_only=True):
@@ -1079,6 +1093,7 @@ class Monitor:
                 self.downtimes_dict[key]['timestamp'] = now
                 sleep(60)
             except:
+                logger.exception('get_valid_downtimes_thread failed')
                 sleep(20)
 
     def get_valid_nodes_thread(self, email, key, secure=True):
@@ -1090,6 +1105,7 @@ class Monitor:
                 self.nodes_dict[key]['timestamp'] = now
                 sleep(60)
             except:
+                logger.exception('get_valid_nodes_thread failed')
                 sleep(20)
 
     def get_valid_chals_thread(self, email, key, secure=True):
@@ -1101,6 +1117,7 @@ class Monitor:
                 self.chals_dict[key]['timestamp'] = now
                 sleep(60)
             except:
+                logger.exception('get_valid_chals_thread failed')
                 sleep(20)
 
     def validate_server(self, server):
@@ -1117,9 +1134,16 @@ class Monitor:
             node = queue.get()
             host_id, node_id = node.location
             curserver = node.curserver
-            if curserver not in self.server_open_chal_dict:
-                logger.warning('server {} has no open challenges, skip challenge'.format(curserver))
+
+            if node.secure and curserver not in self.server_open_chal_dict:
+                logger.warning('server {} has no open challenges for securenode, skip challenge'.format(curserver))
                 continue
+
+            if not node.secure and not self.server_open_chal_dict:
+                # 超级节点只要server_open_chal_dict有数据就发起挑战
+                logger.warning('server {} has no open challenges for supernode, skip challenge'.format(curserver))
+                continue
+            
 
             if self.validate_server(curserver):
                 do_challenge(host_id, node_id, curserver)
