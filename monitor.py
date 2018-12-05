@@ -46,12 +46,14 @@ def parse_home(home):
 
 
 class Node:
-    def __init__(self, id, fqdn, home, curserver, email, create_at, update_at, status, category, secure=True):
+    def __init__(self, id, fqdn, home, curserver, email, ip4, ip6, create_at, update_at, status, category, secure=True):
         self.id = id
         self.fqdn = fqdn
         self.home = home
         self.curserver = curserver
         self.email = email
+        self.ip4 = ip4
+        self.ip6 = ip6
         self.create_at = create_at
         self.update_at = update_at
         self.status = status
@@ -155,14 +157,15 @@ class Node:
         return expired
 
     def __repr__(self):
-        return 'Node(id={}, fqdn={}, home={}, curserver={}, email={}, create_at={}, update_at={}, category={}, status={})'.format(
+        # return 'Node(id={}, fqdn={}, home={}, curserver={}, email={}, create_at={}, update_at={}, category={}, status={})'.format(
+        return 'Node(id={}, fqdn={}, home={}, curserver={}, category={}, status={})'.format(
             self.id,
             self.fqdn,
             self.home,
             self.curserver,
-            self.email,
-            datetime.fromtimestamp(self.create_at / 1000),
-            datetime.fromtimestamp(self.update_at / 1000),
+            # self.email,
+            # datetime.fromtimestamp(self.create_at / 1000),
+            # datetime.fromtimestamp(self.update_at / 1000),
             self.category,
             self.status,
         )
@@ -395,6 +398,8 @@ def get_nodes(key, secure=True):
             n['home'],
             n['curserver'],
             n['email'],
+            n['ip4'],
+            n['ip6'],
             create_at,
             update_at,
             n['status'],
@@ -1264,8 +1269,7 @@ class Monitor:
                                     node not in not_pass_nodes and not node.exceptions and not node.downtimes and node.chals]
                 sorted_nodes = sorted(valid_chal_nodes, key=lambda node: node.chals[0].receive_at)  # 从小到大
                 if len(sorted_nodes) < 3:
-                    logger.debug(
-                        'less than 3 sorted_nodes, ignored, sorted_nodes: {}, nodes: {}'.format(sorted_nodes, nodes))
+                    logger.debug('less than 3 sorted_nodes, ignored, sorted_nodes: {}'.format(sorted_nodes))
                     return
 
                 durations = [(sorted_nodes[i + 1].chals[0].start_at - sorted_nodes[i].chals[0].receive_at) for i in
@@ -1298,8 +1302,7 @@ class Monitor:
 
             # 如果小于3个节点，无需处理, #TODO
             if len(sorted_nodes) < 3:
-                logger.debug(
-                    'less than 3 sorted_nodes, ignored, sorted_nodes: {}, nodes: {}'.format(sorted_nodes, nodes))
+                logger.debug('less than 3 sorted_nodes, ignored, sorted_nodes: {}'.format(sorted_nodes))
                 return
 
             durations = [(sorted_nodes[i + 1].chals[0].start_at - sorted_nodes[i].chals[0].receive_at) for i in
@@ -1560,12 +1563,16 @@ class Monitor:
                 #continue
 
             logger.info('******************************************************************************')
+            if not self.enable_manual_challenge:
+                logger.warning('manual_challenge disabled')
 
             node_dict_by_host = defaultdict(lambda: [])
             node_dict = {}
             for node in node_list:
                 if node.id in self.invalid_nodeids:
                     continue
+                if node.secure and node.ip6 is None:
+                    logger.warning('node ip6 is None, node: {}'.format(node))
                 node_dict[node.fqdn] = node
                 host_id, node_id = node.location
                 node_dict_by_host[host_id].append(node)
